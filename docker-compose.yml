@@ -1,0 +1,86 @@
+version: "2.1"
+volumes:
+    # volume use to share scan data between services - normally mapped to \workspace
+    scanners-volume:
+        external: false
+
+services: 
+    scanner-engine:
+        build: 
+            context: ./engine
+        depends_on: 
+            - api
+            - clair-scanner
+        volumes:
+            - /var/run/docker.sock:/var/run/docker.sock
+            - /usr/bin/docker:/usr/bin/docker
+            - scanners-volume:/workspace
+        ports:
+            - "8765:8765"
+        networks:
+            - clair-network
+            - anchore-network 
+
+# Clair specific configuration
+    clair-db:
+        # investigate how we can ensure that the latest version of the db is always pulled
+        # as of issue https://github.com/docker/compose/issues/3574 closed in 2018 the only way to achieve this is by using `docker-compose pull && docker-compose up`.
+        # Addition of a pull_policy parameter to service definitions is still being considered :(
+        image: arminc/clair-db:latest
+        #depends_on: scanner-engine
+        networks:
+            - clair-network
+
+    clair-server:
+        image: arminc/clair-local-scan:v2.0.6
+        links:
+            - "clair-db:postgres"
+        depends_on: 
+            - clair-db
+        networks:
+            - clair-network
+
+    clair-scanner: 
+        build: 
+            context: ./clair
+            args: 
+                CLAIR_CLIENT_VERSION: v12
+                TARGET_CLAIR_CLIENT: clair-scanner_linux_amd64
+        volumes:
+            - /var/run/docker.sock:/var/run/docker.sock
+            - scanners-volume:/workspace
+        depends_on: 
+            - clair-server
+        network_mode: "service:clair-server"
+
+# Anchore Engine specific configuration
+
+    # The primary API endpoint service
+    api:
+        networks:
+            - anchore-network
+    
+    # Catalog is the primary persistence and state manager of the system
+    catalog:
+        networks:
+            - anchore-network
+
+    queue:
+        networks:
+            - anchore-network
+
+    policy-engine:
+        networks:
+            - anchore-network
+
+    analyzer:
+        networks:
+            - anchore-network
+
+    db:
+        networks:
+            - anchore-network
+
+networks: 
+    clair-network: 
+    anchore-network:
