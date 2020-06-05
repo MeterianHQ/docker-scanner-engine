@@ -3,8 +3,8 @@
 The docker scanner engine is a docker compose application that allows you to perform a vulnerability scan of a given docker image.
 
 ## Prerequisites
-- [Docker](https://docs.docker.com/install/linux/docker-ce/ubuntu/#install-using-the-convenience-script)
-- [Docker Compose](https://docs.docker.com/compose/install/#install-compose-on-linux-systems)
+- [Docker](https://docs.docker.com/install/linux/docker-ce/ubuntu/#install-using-the-convenience-script) (v1.12.0+)
+- [Docker Compose](https://docs.docker.com/compose/install/#install-compose-on-linux-systems) (v1.9.0+)
 
 ## How to use it
 
