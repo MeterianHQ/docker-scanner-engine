@@ -6,7 +6,7 @@ version: '2.1'
 volumes:
   anchore-db-volume:
     # Set this to 'true' to use an external volume. In which case, it must be created manually with "docker volume create anchore-db-volume"
-    external: true
+    external: false
 
 services:
   # The primary API endpoint service
@@ -94,7 +94,7 @@ services:
       - /analysis_scratch
     command: ["anchore-manager", "service", "start", "analyzer"]
   db:
-    image: "postgres:9"
+    image: "anchore/engine-db-preload:v0.7.1"
     volumes:
       - anchore-db-volume:/var/lib/postgresql/data
     environment:
