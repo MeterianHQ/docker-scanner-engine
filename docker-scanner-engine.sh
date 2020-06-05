@@ -13,6 +13,7 @@ showUsageText() {
         Usage: $0 <command> [<args>]
 
         Commands:
+        install         Install $PRG_NAME
         scan            Scan a specific docker image,
                         e.g. $0 scan image:tag
         startup         Start up all services needed for ${PRG_NAME} to function
@@ -22,6 +23,7 @@ showUsageText() {
                           e.g. $0 logService service_name
         scanStatus      View the status of running scan
                           e.g. $0 scanStatus image:tag
+        version         Shows the current ${PRG_NAME} version
         help            Print usage manual
 HEREDOC
 }
@@ -41,6 +43,7 @@ validateDockerImageName() {
 imageScan() {
     image=$1
     validateDockerImageName $image
+    checkIfInstalled
     checkServicesAreUp
 
     echo
@@ -68,8 +71,6 @@ checkServicesAreUp() {
 
 checkIfVulnerabilityDBsAreDoneUpdating() {
     echo "The vulnerability databases are being updated. Waiting on completion"
-    echo "Note: this operation could take up to 20-30 minutes if it's your first time"
-    echo "To check the progress, view logs for service: 'dse_scanner-engine_1'" 
 
     echo
     retryCount=0
@@ -103,14 +104,18 @@ healthCheck() {
     echo ${result}
 }
 
-install() {
-    #TODO wget of the needed docker compose yml files
-}
-
 startupServices() {
+    checkIfInstalled
+    # startup only when services are not up
+    set +e
+    result=$(checkServicesAreUp)
+    exitCode=$?
+    set -e
+    test ${exitCode} -eq 1 || exit ${exitCode}
+
     echo "~~~ Starting up all services"
-    docker-compose -f docker-compose.yml -f anchore-engine-configuration.yml --project-name ${DC_PROJECT_NAME} pull &>/dev/null \
-    && docker-compose -f docker-compose.yml -f anchore-engine-configuration.yml --project-name ${DC_PROJECT_NAME} up -d &>/dev/null
+    docker-compose -f docker-compose.yml -f anchore-engine-configuration.yml --project-name ${DC_PROJECT_NAME} pull \
+    && docker-compose -f docker-compose.yml -f anchore-engine-configuration.yml --project-name ${DC_PROJECT_NAME} up -d
     
     checkIfVulnerabilityDBsAreDoneUpdating
 
@@ -130,32 +135,59 @@ startupServices() {
 }
 
 shutdownServices() {
+    checkIfInstalled
+    result=$(checkServicesAreUp)  # silently check if services are up
+
     exitCode=${1:-"0"}
     echo "~~~ Shutting down all services"
-    docker-compose -f docker-compose.yml -f anchore-engine-configuration.yml --project-name ${DC_PROJECT_NAME} down &>/dev/null
+    docker-compose -f docker-compose.yml -f anchore-engine-configuration.yml --project-name ${DC_PROJECT_NAME} down
     echo "Done."
     exit ${exitCode}
 }
 
 logService() {
+    checkIfInstalled
+
     service="${1}"
     docker logs -f -t ${service}
 }
 
 checkScanStatus() {
+    checkIfInstalled
+    result=$(checkServicesAreUp) # silently check if services are up
+
     image=$1
     curl -X GET localhost:8765/v1/docker/scans?name=${image}
 }
 
 listServices() {
+    checkIfInstalled
     docker-compose -f docker-compose.yml -f anchore-engine-configuration.yml --project-name ${DC_PROJECT_NAME} ps
 }
 
-echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
-echo "  ${PRG_NAME} v${VERSION}  "
-echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-"
+checkIfInstalled() {
+     if [[ ! -f "docker-compose.yml" && ! -f "anchore-engine-configuration.yml" ]]; then
+        echo "${PRG_NAME} is not installed"
+        echo "To install run:"
+        echo "  $0 install"
+        exit 1
+    fi
+}
 
-echo
+install() {
+    if [[ ! -f "docker-compose.yml" && ! -f "anchore-engine-configuration.yml" ]]; then
+        echo "~~~ Installing "
+        wget -q https://raw.githubusercontent.com/MeterianHQ/docker-scanner-engine/master/anchore-engine-configuration.yml
+        wget -q https://raw.githubusercontent.com/MeterianHQ/docker-scanner-engine/master/docker-compose.yml
+        echo "Done."
+    else
+        echo "$PRG_NAME is already installed"
+    fi
+}
+
+# echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+# echo "  ${PRG_NAME} v${VERSION}  "
+# echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-"
 
 if [[ $# -eq 0 ]]; then
     showUsageText
@@ -165,11 +197,12 @@ fi
 while [[ "$#" -gt 0 ]]; do case $1 in
   help)           showUsageText; exit 0 ;;
   scan)           imageScan "${2:-}"; exit 0 ;;
-  startup)        startupServices "${2:-}"; exit 0 ;;
-  shutdown)       shutdownServices "${2:-}"; exit 0 ;;
+  startup)        startupServices; exit 0 ;;
+  shutdown)       shutdownServices; exit 0 ;;
   logService)     logService "${2:-}"; exit 0 ;;
   scanStatus)     checkScanStatus "${2:-}"; exit 0 ;;
-  listServices)   listServices "${2:-}"; exit 0 ;;
-  install)        install "${2:-}"; exit 0 ;;
+  listServices)   listServices; exit 0 ;;
+  install)        install; exit 0 ;;
+  version)        echo ${VERSION}; ;;
   *) echo "Unknown command: $1"; exit 1 ;;
 esac; shift; done
