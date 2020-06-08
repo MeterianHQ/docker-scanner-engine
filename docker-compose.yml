@@ -6,7 +6,7 @@ volumes:
 
 services: 
     scanner-engine:
-        image: meterian/scanner-engine:latest
+        image: meterian/cs-engine:latest
         depends_on: 
             - api
             - clair-scanner
@@ -40,7 +40,7 @@ services:
             - clair-network
 
     clair-scanner: 
-        image: meterian/clair-scanner:latest
+        image: meterian/cs-clair:latest
         volumes:
             - /var/run/docker.sock:/var/run/docker.sock
             - scanners-volume:/workspace
