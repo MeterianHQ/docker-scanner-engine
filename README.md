@@ -17,12 +17,20 @@ After that start the installation by running
 
     $ ./docker-scanner-engine.sh install
 
-This will simply download required file needed to make the application function.
+This will simply download required files needed to make the application function.
 
 ## Scan
-One installed you can run a vulnerability scan of a docker image in the following way
+Once installed you can run a vulnerability scan of a docker image in the following way
 
     $ ./docker-scanner-engine.sh scan <image:tag>
+
+Note that to perform a scan a valid Meterian API token must be set as environment variable on your system. To gain a token, create one from your account at https://meterian.com/account/#tokens
+
+Once you have a token populate a `METERIAN_API_TOKEN` environment variable with its value as shown below
+
+```bash
+export METERIAN_API_TOKEN=12345678-90ab-cdef-1234-567890abcdef
+```
 
 ## Further commands
 
@@ -37,11 +45,11 @@ Executing the script with no parameters prints a mini user manual with all suppo
                         e.g. ./docker-scanner-engine.sh scan image:tag
         startup         Start up all services needed for Docker Scanner Engine to function
         shutdown        Stop all services associated to Docker Scanner Engine
-        listServices    List all services
-        logService      Allows to view the logs of a specific service
-                          e.g. ./docker-scanner-engine.sh logService service_name
-        scanStatus      View the status of running scan
-                          e.g. ./docker-scanner-engine.sh scanStatus image:tag
+        list-services    List all services
+        log-service      Allows to view the logs of a specific service
+                          e.g. $0 log-service service_name
+        scan-status      View the status of running scan
+                          e.g. $0 scan-status image:tag
         version         Shows the current Docker Scanner Engine version
         help            Print usage manual
 
