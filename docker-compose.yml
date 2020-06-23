@@ -8,7 +8,6 @@ services:
     scanner-engine:
         image: meterian/cs-engine:latest
         depends_on: 
-            - api
             - clair-scanner
         volumes:
             - /var/run/docker.sock:/var/run/docker.sock
@@ -17,11 +16,11 @@ services:
         environment: 
             - METERIAN_API_TOKEN=${METERIAN_API_TOKEN}
             - METERIAN_ENV=${METERIAN_ENV}
+            - DSE_AISV=v0.7.1
         ports:
             - "8765:8765"
         networks:
             - clair-network
-            - anchore-network 
 
 # Clair specific configuration
     clair-db:
@@ -51,34 +50,5 @@ services:
             - clair-server
         network_mode: "service:clair-server"
 
-# Anchore Engine specific configuration
-
-    # The primary API endpoint service
-    api:
-        networks:
-            - anchore-network
-    
-    # Catalog is the primary persistence and state manager of the system
-    catalog:
-        networks:
-            - anchore-network
-
-    queue:
-        networks:
-            - anchore-network
-
-    policy-engine:
-        networks:
-            - anchore-network
-
-    analyzer:
-        networks:
-            - anchore-network
-
-    db:
-        networks:
-            - anchore-network
-
 networks: 
     clair-network: 
-    anchore-network:

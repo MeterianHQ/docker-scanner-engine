@@ -16,10 +16,15 @@ DEV_MODE=${DSE_DEV_MODE:-}
 ISO_LOCAL_DATE_TIME="%Y-%m-%dT%H:%M:%S"
 
 dockerCompose() {
+    anchore_engine_conf=""
+    if [[ "${1}" =~ "pull" ]]; then
+        anchore_engine_conf="-f anchore-engine-configuration.yml"
+    fi
+
     if [[ "${DEV_MODE}" != "on" ]]; then
-        docker-compose -f docker-compose.yml -f anchore-engine-configuration.yml --project-name ${DC_PROJECT_NAME} ${*}
+        docker-compose -f docker-compose.yml ${anchore_engine_conf} --project-name ${DC_PROJECT_NAME} ${*}
     else
-        docker-compose -f docker-compose-dev.yml -f anchore-engine-configuration.yml --project-name ${DC_PROJECT_NAME} ${*}
+        docker-compose -f docker-compose-dev.yml ${anchore_engine_conf} --project-name ${DC_PROJECT_NAME} ${*}
     fi
 }
 
@@ -95,15 +100,15 @@ periodicScanStatusUpdate() {
     interval=${2:-"1"}
 
     previousMsg=""
-    scanStatus=$(getScanStatus "${image}")
-    while [[ "${scanStatus}" == "scanning" || "${scanStatus}" == "analyzing" ]]; do # change to regex check with ~= (success|failure|scan_failure)
+    scanStatus="$(getScanStatus "${image}")"
+    while [[ "${scanStatus}" != "success" && "${scanStatus}" != "failure" && "${scanStatus}" != "scan_failure" ]]; do
         currentMsg="$(apiScanProgressMessage "${image}")"
         if [[ "${previousMsg}" != "${currentMsg}" ]]; then
             echo "${currentMsg}"
             previousMsg="${currentMsg}"
         fi
         sleep ${interval}
-        scanStatus=$(getScanStatus "${image}")
+        scanStatus="$(getScanStatus "${image}")"
     done
 }
 
@@ -118,7 +123,7 @@ imageScan() {
     docker pull --quiet "${image}" &>/dev/null
     apiScan ${image}
     echo "$(getDateTime) - Scan for \"${image}\" has started"
-    periodicScanStatusUpdate "${image}" 3
+    periodicScanStatusUpdate "${image}" 2
     echo "$(apiScanProgressMessage "${image}")"
     if [[ "$(getScanStatus "${image}")" != "success" ]]; then
         exit -1
@@ -129,8 +134,7 @@ getServicesCount() {
     downloadComposeFilesIfMissing
     # gather full images names from docker compose files in a file
     serviceImagesFile="images.tmp"
-    grep -oP "image:\s+\K.*" docker-compose.yml >> ${serviceImagesFile} \
-    && grep -oP "image:\s+\K.*" anchore-engine-configuration.yml >> ${serviceImagesFile}
+    grep -oP "image:\s+\K.*" docker-compose.yml | tr '"' " " >> ${serviceImagesFile}
     result=$(cat ${serviceImagesFile} | wc -l)
     rm --force ${serviceImagesFile}
 
@@ -170,10 +174,6 @@ healthCheck() {
     fi
 
     echo ${result}
-}
-
-syncAnchoreDatabase() {
-    dockerCompose exec api anchore-cli system wait
 }
 
 checkDomainIsReachable () {
@@ -245,19 +245,12 @@ startupServices() {
     
     echo "Done."
     echo "Updating the database..."
-    dockerCompose pull --quiet db clair-db
-    dockerCompose up -d clair-scanner \
-                                api \
-                                queue \
-                                policy-engine \
-                                analyzer \
-    &>/dev/null
-    syncAnchoreDatabase &>/dev/null
+    dockerCompose pull --quiet clair-db inline-scan
     echo "Done."
-    dockerCompose up -d scanner-engine &>/dev/null
+    dockerCompose up -d &>/dev/null
     echo "Services startup completed."
     
-    sleep 10
+    sleep 3
 
     echo "~~~ Performing a health check on the services"
     result=$(healthCheck)
@@ -328,8 +321,8 @@ areAllServiceImagesInstalled() {
     downloadComposeFilesIfMissing
     # gather full images names from docker compose files in a file
     serviceImagesFile="images.tmp"
-    grep -oP "image:\s+\K.*" docker-compose.yml >> ${serviceImagesFile} \
-    && grep -oP "image:\s+\K.*" anchore-engine-configuration.yml >> ${serviceImagesFile}
+    grep -oP "image:\s+\K.*" docker-compose.yml | tr '"' " " >> ${serviceImagesFile} \
+    && grep -oP "image:\s+\K.*" anchore-engine-configuration.yml | tr '"' " " >> ${serviceImagesFile}
 
     # check that each image results installed - hence has an image id
     result=0
@@ -354,59 +347,12 @@ install() {
         echo "~~~ Installing "
         # Pull images for services defined in the docker-compose config files
         echo "Installing services..."
-        dockerCompose pull &>/dev/null
+        dockerCompose pull #&>/dev/null
         echo "All service were successfully installed"
-
-        # Initialise the database 
-        echo "Initialising database..."
-        echo "Note: this operation can take up to 10 minutes or more to complete"
-        anchoreInitialization
-        echo "Initialisation completed"
-
         echo "The installation was successful."
     else
         echo "$PRG_NAME is already installed"
     fi
-}
-
-removeDockerImage() {
-    imageId=${1}
-    docker rmi --force ${imageId}
-}
-
-teardownDb() {
-    anchoreDbImageId=$(dockerCompose images --quiet db)
-    dockerCompose stop db
-    dockerCompose rm --force db
-    removeDockerImage ${anchoreDbImageId}
-}
-
-anchoreInitialization() {
-    # Bringing up anchore services - this brings up the db as it's required by these service definition in the docker compose config.
-    dockerCompose up -d api queue policy-engine analyzer &>/dev/null
-
-    # Once the db is done initialising anchore API will be reachable on port 8228 
-    # Code below checks this periodically for a set amount of time
-    captureCurlResults="curl-results.tmp"
-    retryCount=0
-    while [[ true ]]; do
-        curl -X GET "http://localhost:8228" &> ${captureCurlResults} || true
-        if [[ -z "$(grep "\"v1\"" ${captureCurlResults})" ]]; then
-            rm --force ${captureCurlResults}
-            if [[ ${retryCount} -eq 90 ]]; then
-                teardownDb &>/dev/null
-                echo "Something went wrong initialising the databases (retry count: ${retryCount})"
-                shutdownServices 1 &>/dev/null
-            fi
-            sleep 10
-            retryCount=$((retryCount + 1))
-        else
-            break
-        fi
-    done
-
-    rm --force ${captureCurlResults}
-    dockerCompose down &>/dev/null
 }
 
 # echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
