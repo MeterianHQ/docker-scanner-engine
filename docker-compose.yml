@@ -11,16 +11,8 @@ services:
             - clair-scanner
         volumes:
             - /var/run/docker.sock:/var/run/docker.sock
+            - ${DSE_DOCKER_BIN}:${DSE_DOCKER_BIN}
             - scanners-volume:/workspace
-            - /lib/modules:/lib/modules:ro
-            - /run/snapd.socket:/run/snapd.socket
-            - /snap/docker/current/bin/docker:/snap/docker/current/bin/docker
-            - /snap/docker/current:/snap/docker/current
-        tmpfs: 
-            - /run
-            - /run/lock
-            - /tmp
-        privileged: true
         environment: 
             - METERIAN_API_TOKEN=${METERIAN_API_TOKEN}
             - METERIAN_ENV=${METERIAN_ENV}

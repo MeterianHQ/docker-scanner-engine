@@ -14,8 +14,29 @@ METERIAN_ENV="${METERIAN_ENV}"
 METERIAN_API_TOKEN="${METERIAN_API_TOKEN:-}"
 DEV_MODE=${DSE_DEV_MODE:-}
 ISO_LOCAL_DATE_TIME="%Y-%m-%dT%H:%M:%S"
+ISO_LOCAL_DATE="%Y-%m-%d"
 METERIAN_USER_DIR="${HOME}/.meterian/dse"
 DIAGNOSIS_FILE="${METERIAN_USER_DIR}/system.log"
+MAIN_YML="${METERIAN_USER_DIR}/docker-compose.yml"
+ANCHORE_YML="${METERIAN_USER_DIR}/anchore-engine-configuration.yml"
+MAX_SYSLOG_FILE_SIZE=500000
+
+## function for running other functions with a timeout
+function run_cmd { 
+    cmd="$1"; timeout="$2";
+    grep -qP '^\d+$' <<< $timeout || timeout=10
+
+    ( 
+        eval "$cmd" &
+        child=$!
+        trap -- "" SIGTERM 
+        (       
+                sleep $timeout
+                kill $child 2> /dev/null 
+        ) &     
+        wait $child
+    )
+}
 
 exportDockerBin() {
     dockerBin="$(which docker)"
@@ -27,7 +48,7 @@ exportDockerBin() {
 }
 exportDockerBin
 
-getDateTime() {
+_date() {
     format=${1:-$ISO_LOCAL_DATE_TIME}
     date +${format}
 }
@@ -35,7 +56,7 @@ getDateTime() {
 log() {
     txt="${1:-}"
     options="${2:-}"
-    echo ${options} "$(getDateTime) - ${txt}" >> "${DIAGNOSIS_FILE}"
+    echo ${options} "$(_date) - ${txt}" >> "${DIAGNOSIS_FILE}"
 }
 
 printAndLog() {
@@ -46,7 +67,19 @@ printAndLog() {
 }
 
 execAndLog() {
-    eval "${*}" | tee -a "${DIAGNOSIS_FILE}"
+    eval "${*}" 2>&1 | tee -a "${DIAGNOSIS_FILE}"
+}
+
+checkIfCurlIsInstalled() {
+    log "Checking if curl is installed..."
+    set +e
+    curl --version >>/dev/null 2>&1
+    exitCode=$?
+    if [[ "${exitCode}" != "0" ]]; then
+        echo "Error: curl is not installed"
+        exit -1
+    fi
+    log "curl is installed"
 }
 
 checkThatDockerAndDockerComposeAreInstalled() {
@@ -55,31 +88,38 @@ checkThatDockerAndDockerComposeAreInstalled() {
     docker --version >>/dev/null 2>&1
     exitCode=$?
     if [[ "${exitCode}" != "0" ]]; then
-        echo "Error: Docker is not installed"
+        echo "Error: docker is not installed"
         exit -1
     fi
 
     docker-compose --version >>/dev/null 2>&1
     exitCode=$?
     if [[ "${exitCode}" != "0" ]]; then
-        echo "Error: Docker Compose is not installed"
+        echo "Error: docker-compose is not installed"
         exit -1
     fi
     log "Both are installed!"
 }
 
+truncateSysLog() {
+    tail -c ${MAX_SYSLOG_FILE_SIZE} "${DIAGNOSIS_FILE}" > "${DIAGNOSIS_FILE}.tmp"
+    mv "${DIAGNOSIS_FILE}.tmp" ${DIAGNOSIS_FILE}
+    rm -f "${DIAGNOSIS_FILE}.tmp"
+}
+
 prepareDiagnosisFile() {
-    rm --force "${DIAGNOSIS_FILE}"
     mkdir -p "${METERIAN_USER_DIR}"
     touch "${DIAGNOSIS_FILE}"
 
+    truncateSysLog
     execAndLog checkThatDockerAndDockerComposeAreInstalled
+    execAndLog checkIfCurlIsInstalled
     echo -ne "\n----\n\n" >> ${DIAGNOSIS_FILE}
 
     hostDockerVersion="$(docker --version)"
     hostDockerComposeVersion="$(docker-compose --version)"
-    echo "$(getDateTime) - Docker version: ${hostDockerVersion}" >> "${DIAGNOSIS_FILE}"
-    echo "$(getDateTime) - Docker Compose version: ${hostDockerComposeVersion}" >> "${DIAGNOSIS_FILE}"
+    echo "$(_date) - Docker version: ${hostDockerVersion}" >> "${DIAGNOSIS_FILE}"
+    echo "$(_date) - Docker Compose version: ${hostDockerComposeVersion}" >> "${DIAGNOSIS_FILE}"
     echo -ne "\n----\n\n" >> "${DIAGNOSIS_FILE}"
 }
 prepareDiagnosisFile
@@ -87,16 +127,30 @@ prepareDiagnosisFile
 dockerCompose() {
     anchore_engine_conf=""
     if [[ "${1}" =~ "pull" ]]; then
-        anchore_engine_conf="-f anchore-engine-configuration.yml"
+        anchore_engine_conf="-f ${ANCHORE_YML}"
     fi
 
     if [[ "${DEV_MODE}" != "on" ]]; then
-        docker-compose -f docker-compose.yml ${anchore_engine_conf} --project-name ${DC_PROJECT_NAME} ${*}
+        docker-compose -f ${MAIN_YML} ${anchore_engine_conf} --project-name ${DC_PROJECT_NAME} ${*}
     else
-        docker-compose -f docker-compose-dev.yml ${anchore_engine_conf} --project-name ${DC_PROJECT_NAME} ${*}
+        docker-compose -f "${METERIAN_USER_DIR}/docker-compose-dev.yml" ${anchore_engine_conf} --project-name ${DC_PROJECT_NAME} ${*}
     fi
 }
 
+onExit() {
+    # on exit routine 
+    # truncate system log file
+    truncateSysLog
+    
+    # save service scanner engine logs
+    scanner_engine_log_file="${METERIAN_USER_DIR}/scanner_engine_$(_date "${ISO_LOCAL_DATE}").log"
+    run_cmd "dockerCompose logs -t -f scanner-engine" 1 >> "${scanner_engine_log_file}" || true
+
+    # TODO remove any temporary file that is created for whatever reason by the script
+}
+trap onExit EXIT
+
+#TODO properly implement update
 showUsageText() {
     cat << HEREDOC
         Usage: $0 <command> [<args>]
@@ -113,6 +167,9 @@ showUsageText() {
         scan-status      View the status of running scan
                           e.g. $0 scan-status image:tag
         version          Shows the current ${PRG_NAME} version
+        restart          Restart ${PRG_NAME}
+        update           Update program files and databases
+        diagnose         Diagnose the application
         help             Print usage manual
 HEREDOC
 }
@@ -131,8 +188,8 @@ validateDockerImageName() {
 
 apiScan() {
     image=${1}
-
-    curl -X POST "http://localhost:8765/v1/docker/scans?name=${image}" >> ${DIAGNOSIS_FILE} 2>&1
+    log "Requesting scan for ${image}..."
+    curl -X POST "http://localhost:8765/v1/docker/scans?name=${image}" >> ${DIAGNOSIS_FILE} 2> /dev/null
 }
 
 apiScanProgressMessage() {
@@ -140,8 +197,10 @@ apiScanProgressMessage() {
 
     outputFile="scan-status-msg.tmp"
     rm --force "${outputFile}"
-    curl -o "${outputFile}" "http://localhost:8765/v1/docker/scans?name=${image}&fmt=txt" >> ${DIAGNOSIS_FILE} 2>&1
+    log "Requesting scan progress message for ${image}..."
+    curl -o "${outputFile}" "http://localhost:8765/v1/docker/scans?name=${image}&fmt=txt" 2> /dev/null
     progressMessage="$(cat ${outputFile})"
+    log "\"${progressMessage}\""
     rm --force "${outputFile}"
 
     echo "${progressMessage}"
@@ -152,8 +211,10 @@ getScanStatus() {
     outputFile="scan-status.tmp"
 
     rm --force "${outputFile}"
-    curl -o "${outputFile}" "http://localhost:8765/v1/docker/scans?name=${image}&status=true" >> ${DIAGNOSIS_FILE} 2>&1
+    log "Requesting scan status for ${image}..."
+    curl -o "${outputFile}" "http://localhost:8765/v1/docker/scans?name=${image}&status=true" 2> /dev/null
     status=$(cat ${outputFile})
+    log "\"${status}\""
     rm --force "${outputFile}"
 
     echo "${status}"
@@ -184,10 +245,10 @@ imageScan() {
     execAndLog checkIfAllServicesAreUp
 
     printAndLog
-    printAndLog "$(getDateTime) - Pulling \"${image}\"..."
-    docker pull "${image}" >> ${DIAGNOSIS_FILE} 2>&1
+    printAndLog "$(_date) - Pulling \"${image}\"..."
+    execAndLog docker pull "${image}"
     apiScan ${image}
-    printAndLog "$(getDateTime) - Scan for \"${image}\" has started"
+    printAndLog "$(_date) - Scan for \"${image}\" has started"
     execAndLog periodicScanStatusUpdate "${image}" 2
     printAndLog "$(apiScanProgressMessage "${image}")"
     if [[ "$(getScanStatus "${image}")" != "success" ]]; then
@@ -201,7 +262,7 @@ getServicesCount() {
     downloadComposeFilesIfMissing
     # gather full images names from docker compose files in a file
     serviceImagesFile="images.tmp"
-    grep -oP "image:\s+\K.*" docker-compose.yml | tr '"' " " >> ${serviceImagesFile}
+    grep -oP "image:\s+\K.*" ${MAIN_YML} | tr '"' " " >> ${serviceImagesFile}
     result=$(cat ${serviceImagesFile} | wc -l)
     rm --force ${serviceImagesFile}
 
@@ -248,7 +309,7 @@ checkDomainIsReachable () {
     timeOut=${2:-"30"}
 
     exitCode=0
-    curl -s -L -I ${domain} --connect-timeout ${timeOut} >> ${DIAGNOSIS_FILE} 2>&1 || exitCode=$?
+    curl -s -L -I ${domain} --connect-timeout ${timeOut} >> ${DIAGNOSIS_FILE} 2> /dev/null || exitCode=$?
     echo "${exitCode}"
 }
 
@@ -265,6 +326,7 @@ authenticate() {
 
         exitCode=0
         apiEndpointUrl="${domainUrl}/api/v1/accounts/really-me"
+        log "Attempting authentication through API ${apiEndpointUrl} with token ${METERIAN_API_TOKEN}"
         response=$(curl -s -L -I -H 'Authorization: token '${METERIAN_API_TOKEN}''  "${apiEndpointUrl}") || exitCode=$?
         if [[ "${exitCode}" != "0" ]];then
             echo "Authentication error"
@@ -301,7 +363,10 @@ startupServices() {
     exitCode=$?
     set -e
     log "Check completed with exit code: ${exitCode}"
-    test "${exitCode}" == "255" || exit ${exitCode}
+    if [[ "${exitCode}" != "255" ]];then
+        printAndLog "Services are already up"
+        exit ${exitCode}
+    fi
 
     execAndLog authenticate
 
@@ -309,20 +374,20 @@ startupServices() {
     printAndLog "~~~ Starting up all services"
     printAndLog "Updating services..."
     if [[ "${DEV_MODE}" != "on" ]]; then
-        dockerCompose pull scanner-engine clair-scanner >> ${DIAGNOSIS_FILE} 2>&1
+        execAndLog dockerCompose pull scanner-engine clair-scanner
     else
-        dockerCompose build scanner-engine clair-scanner >> ${DIAGNOSIS_FILE} 2>&1
+        execAndLog dockerCompose build scanner-engine clair-scanner
     fi
     
     printAndLog "Done."
     printAndLog "Updating the database..."
-    dockerCompose pull clair-db inline-scan >> ${DIAGNOSIS_FILE} 2>&1
+    execAndLog dockerCompose pull clair-db inline-scan
     printAndLog "Done."
-    dockerCompose up -d >> ${DIAGNOSIS_FILE} 2>&1
-    printAndLog "Services startup completed."
+    execAndLog dockerCompose up -d
     
     sleep 10
 
+    printAndLog "Services startup completed."
     printAndLog "~~~ Performing a health check on the services"
     result=$(healthCheck)
     log "Health check returned: ${result}"
@@ -330,11 +395,12 @@ startupServices() {
         printAndLog "The services are up and healthy\n\n" "-ne"
         printAndLog "Image scans are allowed!"
     else
+        # TODO change bit below to invite the user to use the diagnose command
         printAndLog "The services are up but unhealthy"
         printAndLog "Cannot allow scans to run at this moment"
         printAndLog ""
         listServices
-        printAndLog -ne "\nTo view logs for a specific service run:"
+        printAndLog "\nTo view logs for a specific service run:" "-ne"
         printAndLog "  e.g. $0 log-service service_name"
     fi
 }
@@ -392,14 +458,14 @@ $(docker images --format "table {{.Repository}}:{{.Tag}}\t{{.ID}}" | grep -P "(a
 }
 
 downloadComposeFilesIfMissing() {
-    if [[ ! -f "docker-compose.yml" ]]; then
-        wget -q https://raw.githubusercontent.com/MeterianHQ/docker-scanner-engine/master/docker-compose.yml
-        log "Downloaded docker-compose.yml\nfolder content:\n$(ls -l docker-compose.yml)\n" "-ne"
+    if [[ ! -f "${MAIN_YML}" ]]; then
+        wget -O "${MAIN_YML}" -q https://raw.githubusercontent.com/MeterianHQ/docker-scanner-engine/master/docker-compose.yml
+        log "Downloaded docker-compose.yml\nfolder content:\n$(ls -l ${MAIN_YML})\n" "-ne"
     fi
-
-    if [[ ! -f "anchore-engine-configuration.yml" ]]; then
-        wget -q https://raw.githubusercontent.com/MeterianHQ/docker-scanner-engine/master/anchore-engine-configuration.yml
-        log "Downloaded docker-compose.yml\nfolder content:\n$(ls -l docker-compose.yml)\n" "-ne"    
+    
+    if [[ ! -f "${ANCHORE_YML}" ]]; then
+        wget -O "${ANCHORE_YML}" -q https://raw.githubusercontent.com/MeterianHQ/docker-scanner-engine/master/anchore-engine-configuration.yml
+        log "Downloaded docker-compose.yml\nfolder content:\n$(ls -l ${ANCHORE_YML})\n" "-ne"    
     fi
 }
 
@@ -407,8 +473,8 @@ areAllServiceImagesInstalled() {
     downloadComposeFilesIfMissing
     # gather full images names from docker compose files in a file
     serviceImagesFile="images.tmp"
-    grep -oP "image:\s+\K.*" docker-compose.yml | tr '"' " " >> ${serviceImagesFile} \
-    && grep -oP "image:\s+\K.*" anchore-engine-configuration.yml | tr '"' " " >> ${serviceImagesFile}
+    grep -oP "image:\s+\K.*" ${MAIN_YML} | tr '"' " " >> ${serviceImagesFile} \
+    && grep -oP "image:\s+\K.*" ${ANCHORE_YML} | tr '"' " " >> ${serviceImagesFile}
 
     # check that each image results installed - hence has an image id
     result=0
@@ -433,7 +499,7 @@ install() {
         printAndLog "~~~ Installing "
         # Pull images for services defined in the docker-compose config files
         printAndLog "Installing services..."
-        dockerCompose pull >> ${DIAGNOSIS_FILE} 2>&1
+        execAndLog dockerCompose pull
         printAndLog "All service were successfully installed"
         printAndLog "The installation was successful."
     else
@@ -441,9 +507,65 @@ install() {
     fi
 }
 
-getDiagnosis() {
-    cp ${DIAGNOSIS_FILE} .
-    echo "diagnosis file available here: $(pwd)/system.log"
+restart() {
+    printAndLog "Restarting ${PRG_NAME}..."
+    shutdownServices 
+    startupServices
+}
+
+updatePrgFilesAndDb() {
+    printAndLog "Updating program files and database..."
+    downloadComposeFilesIfMissing
+    execAndLog dockerCompose pull clair-db inline-scan
+}
+
+diagnose() {
+# (to grep everything but debug logs  docker logs -f -t dse_scanner-engine_1 | grep -P '^(?!.*DEBUG).*$')
+# TODO print diagnosis relevant to last execution ??
+: '
+    - ideally save last exit code to file (in ~/.meterian/dse) and when asked for diagnosis print relevant message
+    related to last execution exit code and save all logs in a zip file and tell user in the same message that
+    the latter was saved 
+    - Do health check in here too
+    - restart command
+'
+    echo "Diagnosing..."
+    echo -ne "Are all services installed? "
+    if [[ "$(areAllServiceImagesInstalled)" == "0" ]];then
+        echo "YES"
+        echo "Services health is: "$(healthCheck)""
+        echo "Displaying running services..."
+        echo
+        dockerCompose ps 
+        echo
+        
+        # here we could maybe provide info on last execution by retrieving the last exit code
+        echo "Last execution finished with exit code: x"
+        echo "x: \"Something something something\""
+        # here is some instances we could suggest to restart the $0 restart
+        echo
+
+        scanner_engine_log_file="${METERIAN_USER_DIR}/scanner_engine_$(_date "${ISO_LOCAL_DATE}").log"
+        diagnosisDumpDir="${HOME}/.$(echo ${PRG_NAME} | tr '[:upper:]' '[:lower:]' |tr ' ' '_')"
+        mkdir -p "${diagnosisDumpDir}"
+        rm -f ${diagnosisDumpDir}/*
+
+        cp ${DIAGNOSIS_FILE} "${diagnosisDumpDir}/"
+        cp ${scanner_engine_log_file} "${diagnosisDumpDir}/"
+
+        zipExitCode=0
+        ( cd ${diagnosisDumpDir} ; zip -r "system-logs.zip" . * >> /dev/null 2>&1 ) || zipExitCode=${?}
+
+        if [[ "${zipExitCode}" != "0" ]]; then
+            echo "System log files available here: ${diagnosisDumpDir}/"
+        else
+            rm -f ${diagnosisDumpDir}/*.log
+            echo "zip file with system logs available here: ${diagnosisDumpDir}/system-logs.zip"
+        fi
+        
+    else
+        echo "NO"
+    fi
 }
 
 # echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
@@ -464,7 +586,9 @@ while [[ "$#" -gt 0 ]]; do case $1 in
   scan-status)     checkScanStatus "${2:-}"; exit 0 ;;
   list-services)   listServices; exit 0 ;;
   install)         install; exit 0 ;;
-  diagnose)        getDiagnosis; exit 0 ;;
-  version)         echo ${VERSION}; ;;
+  version)         echo "${PRG_NAME} v${VERSION}"; ;;
+  restart)         restart; exit 0 ;;
+  update)          updatePrgFilesAndDb; exit 0 ;;
+  diagnose)        diagnose; exit 0 ;;
   *) echo "Unknown command: $1"; exit -1 ;;
 esac; shift; done

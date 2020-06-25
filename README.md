@@ -37,20 +37,22 @@ export METERIAN_API_TOKEN=12345678-90ab-cdef-1234-567890abcdef
 Executing the script with no parameters prints a mini user manual with all supported commands as shown below
 
 ```bash
-        Usage: ./docker-scanner-engine.sh <command> [<args>]
+        Usage: $0 <command> [<args>]
 
         Commands:
-        install         Install Docker Scanner Engine
-        scan            Scan a specific docker image,
-                        e.g. ./docker-scanner-engine.sh scan image:tag
-        startup         Start up all services needed for Docker Scanner Engine to function
-        shutdown        Stop all services associated to Docker Scanner Engine
+        install          Install $PRG_NAME
+        scan             Scan a specific docker image,
+                         e.g. $0 scan image:tag
+        startup          Start up all services needed for ${PRG_NAME} to function
+        shutdown         Stop all services associated to ${PRG_NAME}
         list-services    List all services
         log-service      Allows to view the logs of a specific service
                           e.g. $0 log-service service_name
         scan-status      View the status of running scan
                           e.g. $0 scan-status image:tag
-        version         Shows the current Docker Scanner Engine version
-        help            Print usage manual
-
+        version          Shows the current ${PRG_NAME} version
+        restart          Restart ${PRG_NAME}
+        update           Update program files and databases
+        diagnose         Diagnose the application
+        help             Print usage manual
 ```
