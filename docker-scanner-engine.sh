@@ -156,21 +156,22 @@ showUsageText() {
         Usage: $0 <command> [<args>]
 
         Commands:
-        install          Install $PRG_NAME
-        scan             Scan a specific docker image,
-                         e.g. $0 scan image:tag
-        startup          Start up all services needed for ${PRG_NAME} to function
-        shutdown         Stop all services associated to ${PRG_NAME}
-        list-services    List all services
-        log-service      Allows to view the logs of a specific service
-                          e.g. $0 log-service service_name
-        scan-status      View the status of running scan
-                          e.g. $0 scan-status image:tag
-        version          Shows the current ${PRG_NAME} version
-        restart          Restart ${PRG_NAME}
-        update           Update program files and databases
-        diagnose         Diagnose the application
-        help             Print usage manual
+        install           Install $PRG_NAME
+        scan              Scan a specific docker image,
+                           e.g. $0 scan image:tag
+        startup           Start up all services needed for ${PRG_NAME} to function
+        shutdown          Stop all services associated to ${PRG_NAME}
+        list-services     List all services
+        log-service       Allows to view the logs of a specific service
+                           e.g. $0 log-service service_name
+        scan-status       View the status of running scan
+                           e.g. $0 scan-status image:tag
+        version           Shows the current ${PRG_NAME} version
+        restart           Restart ${PRG_NAME}
+        update            Update program files and databases
+        diagnose          Diagnose the application
+        system-cleanup    Perform an application system clean up
+        help              Print usage manual
 HEREDOC
 }
 
@@ -568,6 +569,16 @@ diagnose() {
     fi
 }
 
+sysCleanUp() {
+    printAndLog "Application system clean up in progress..."
+    downloadComposeFilesIfMissing
+    log "Removing all one-off containers"
+    dockerCompose rm --force >> ${DIAGNOSIS_FILE} 2>&1
+    log "Removing all related docker containers"
+    dockerCompose rm --stop --force -v scanner-engine clair-db clair-server clair-scanner >> ${DIAGNOSIS_FILE} 2>&1
+    printAndLog "Done."
+}
+
 # echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
 # echo "  ${PRG_NAME} v${VERSION}  "
 # echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-"
@@ -578,17 +589,18 @@ if [[ $# -eq 0 ]]; then
 fi
 
 while [[ "$#" -gt 0 ]]; do case $1 in
-  help)            showUsageText; exit 0 ;;
-  scan)            imageScan "${2:-}"; exit 0 ;;
-  startup)         startupServices; exit 0 ;;
-  shutdown)        shutdownServices; exit 0 ;;
-  log-service)     logService "${2:-}"; exit 0 ;;
-  scan-status)     checkScanStatus "${2:-}"; exit 0 ;;
-  list-services)   listServices; exit 0 ;;
-  install)         install; exit 0 ;;
-  version)         echo "${PRG_NAME} v${VERSION}"; ;;
-  restart)         restart; exit 0 ;;
-  update)          updatePrgFilesAndDb; exit 0 ;;
-  diagnose)        diagnose; exit 0 ;;
+  help)             showUsageText; exit 0 ;;
+  scan)             imageScan "${2:-}"; exit 0 ;;
+  startup)          startupServices; exit 0 ;;
+  shutdown)         shutdownServices; exit 0 ;;
+  log-service)      logService "${2:-}"; exit 0 ;;
+  scan-status)      checkScanStatus "${2:-}"; exit 0 ;;
+  list-services)    listServices; exit 0 ;;
+  install)          install; exit 0 ;;
+  version)          echo "${PRG_NAME} v${VERSION}"; ;;
+  restart)          restart; exit 0 ;;
+  update)           updatePrgFilesAndDb; exit 0 ;;
+  diagnose)         diagnose; exit 0 ;;
+  system-cleanup)   sysCleanUp; exit 0;;
   *) echo "Unknown command: $1"; exit -1 ;;
 esac; shift; done
