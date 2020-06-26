@@ -5,7 +5,7 @@ set -u
 set -o pipefail
 
 PRG_NAME="Docker Scanner Engine"
-VERSION="0.1"
+VERSION="0.9.1"
 DC_PROJECT_NAME="dse" # Docker Compose Project Name
 if [[ -z "${METERIAN_ENV:-}" ]]; then
     export METERIAN_ENV="www"
@@ -22,18 +22,18 @@ ANCHORE_YML="${METERIAN_USER_DIR}/anchore-engine-configuration.yml"
 MAX_SYSLOG_FILE_SIZE=500000
 
 ## function for running other functions with a timeout
-function run_cmd { 
+function run_cmd {
     cmd="$1"; timeout="$2";
     grep -qP '^\d+$' <<< $timeout || timeout=10
 
-    ( 
+    (
         eval "$cmd" &
         child=$!
-        trap -- "" SIGTERM 
-        (       
+        trap -- "" SIGTERM
+        (
                 sleep $timeout
-                kill $child 2> /dev/null 
-        ) &     
+                kill $child 2> /dev/null
+        ) &
         wait $child
     )
 }
@@ -131,17 +131,17 @@ dockerCompose() {
     fi
 
     if [[ "${DEV_MODE}" != "on" ]]; then
-        docker-compose -f ${MAIN_YML} ${anchore_engine_conf} --project-name ${DC_PROJECT_NAME} ${*}
+        docker-compose --project-directory ${METERIAN_USER_DIR} -f docker-compose.yml ${anchore_engine_conf} --project-name ${DC_PROJECT_NAME} ${*}
     else
-        docker-compose -f "${METERIAN_USER_DIR}/docker-compose-dev.yml" ${anchore_engine_conf} --project-name ${DC_PROJECT_NAME} ${*}
+        docker-compose --project-directory ${METERIAN_USER_DIR} -f docker-compose-dev.yml ${anchore_engine_conf} --project-name ${DC_PROJECT_NAME} ${*}
     fi
 }
 
 onExit() {
-    # on exit routine 
+    # on exit routine
     # truncate system log file
     truncateSysLog
-    
+
     # save service scanner engine logs
     scanner_engine_log_file="${METERIAN_USER_DIR}/scanner_engine_$(_date "${ISO_LOCAL_DATE}").log"
     run_cmd "dockerCompose logs -t -f scanner-engine" 1 >> "${scanner_engine_log_file}" || true
@@ -288,7 +288,7 @@ checkIfAnyServicesAreUp() {
     services_count=$(dockerCompose ps -q | wc -l)
     if [[ ${services_count} -gt 0 ]]; then
         return 0
-    fi 
+    fi
     return 1
 }
 
@@ -314,7 +314,7 @@ checkDomainIsReachable () {
 }
 
 authenticate() {
-    if [[ -n "${METERIAN_API_TOKEN}" ]]; then 
+    if [[ -n "${METERIAN_API_TOKEN}" ]]; then
         echo "~~~ Authentication in progress"
 
         domainUrl="https://${METERIAN_ENV}.meterian.com"
@@ -378,13 +378,13 @@ startupServices() {
     else
         execAndLog dockerCompose build scanner-engine clair-scanner
     fi
-    
+
     printAndLog "Done."
     printAndLog "Updating the database..."
     execAndLog dockerCompose pull clair-db inline-scan
     printAndLog "Done."
     execAndLog dockerCompose up -d
-    
+
     sleep 10
 
     printAndLog "Services startup completed."
@@ -462,10 +462,10 @@ downloadComposeFilesIfMissing() {
         wget -O "${MAIN_YML}" -q https://raw.githubusercontent.com/MeterianHQ/docker-scanner-engine/master/docker-compose.yml
         log "Downloaded docker-compose.yml\nfolder content:\n$(ls -l ${MAIN_YML})\n" "-ne"
     fi
-    
+
     if [[ ! -f "${ANCHORE_YML}" ]]; then
         wget -O "${ANCHORE_YML}" -q https://raw.githubusercontent.com/MeterianHQ/docker-scanner-engine/master/anchore-engine-configuration.yml
-        log "Downloaded docker-compose.yml\nfolder content:\n$(ls -l ${ANCHORE_YML})\n" "-ne"    
+        log "Downloaded docker-compose.yml\nfolder content:\n$(ls -l ${ANCHORE_YML})\n" "-ne"
     fi
 }
 
@@ -509,7 +509,7 @@ install() {
 
 restart() {
     printAndLog "Restarting ${PRG_NAME}..."
-    shutdownServices 
+    shutdownServices
     startupServices
 }
 
@@ -525,7 +525,7 @@ diagnose() {
 : '
     - ideally save last exit code to file (in ~/.meterian/dse) and when asked for diagnosis print relevant message
     related to last execution exit code and save all logs in a zip file and tell user in the same message that
-    the latter was saved 
+    the latter was saved
     - Do health check in here too
     - restart command
 '
@@ -536,9 +536,9 @@ diagnose() {
         echo "Services health is: "$(healthCheck)""
         echo "Displaying running services..."
         echo
-        dockerCompose ps 
+        dockerCompose ps
         echo
-        
+
         # here we could maybe provide info on last execution by retrieving the last exit code
         echo "Last execution finished with exit code: x"
         echo "x: \"Something something something\""
@@ -562,7 +562,7 @@ diagnose() {
             rm -f ${diagnosisDumpDir}/*.log
             echo "zip file with system logs available here: ${diagnosisDumpDir}/system-logs.zip"
         fi
-        
+
     else
         echo "NO"
     fi
