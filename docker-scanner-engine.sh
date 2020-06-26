@@ -5,7 +5,7 @@ set -u
 set -o pipefail
 
 PRG_NAME="Docker Scanner Engine"
-VERSION="0.9.1"
+VERSION="0.9.2"
 DC_PROJECT_NAME="dse" # Docker Compose Project Name
 if [[ -z "${METERIAN_ENV:-}" ]]; then
     export METERIAN_ENV="www"
@@ -13,13 +13,18 @@ fi
 METERIAN_ENV="${METERIAN_ENV}"
 METERIAN_API_TOKEN="${METERIAN_API_TOKEN:-}"
 DEV_MODE=${DSE_DEV_MODE:-}
+
 ISO_LOCAL_DATE_TIME="%Y-%m-%dT%H:%M:%S"
 ISO_LOCAL_DATE="%Y-%m-%d"
+
 METERIAN_USER_DIR="${HOME}/.meterian/dse"
 DIAGNOSIS_FILE="${METERIAN_USER_DIR}/system.log"
-MAIN_YML="${METERIAN_USER_DIR}/docker-compose.yml"
-ANCHORE_YML="${METERIAN_USER_DIR}/anchore-engine-configuration.yml"
 MAX_SYSLOG_FILE_SIZE=500000
+
+DOCKER_COMPOSE_YML_FILENAME="docker-compose.yml"
+DOCKER_COMPOSE_YML="${METERIAN_USER_DIR}/${DOCKER_COMPOSE_YML_FILENAME}"
+ANCHORE_YML_FILENAME="anchore-engine-configuration.yml"
+ANCHORE_YML="${METERIAN_USER_DIR}/${ANCHORE_YML_FILENAME}"
 
 ## function for running other functions with a timeout
 function run_cmd {
@@ -127,11 +132,11 @@ prepareDiagnosisFile
 dockerCompose() {
     anchore_engine_conf=""
     if [[ "${1}" =~ "pull" ]]; then
-        anchore_engine_conf="-f ${ANCHORE_YML}"
+        anchore_engine_conf="-f ${ANCHORE_YML_FILENAME}"
     fi
 
     if [[ "${DEV_MODE}" != "on" ]]; then
-        docker-compose --project-directory ${METERIAN_USER_DIR} -f docker-compose.yml ${anchore_engine_conf} --project-name ${DC_PROJECT_NAME} ${*}
+        docker-compose --project-directory ${METERIAN_USER_DIR} -f ${DOCKER_COMPOSE_YML_FILENAME} ${anchore_engine_conf} --project-name ${DC_PROJECT_NAME} ${*}
     else
         docker-compose --project-directory ${METERIAN_USER_DIR} -f docker-compose-dev.yml ${anchore_engine_conf} --project-name ${DC_PROJECT_NAME} ${*}
     fi
@@ -263,7 +268,7 @@ getServicesCount() {
     downloadComposeFilesIfMissing
     # gather full images names from docker compose files in a file
     serviceImagesFile="images.tmp"
-    grep -oP "image:\s+\K.*" ${MAIN_YML} | tr '"' " " >> ${serviceImagesFile}
+    grep -oP "image:\s+\K.*" ${DOCKER_COMPOSE_YML} | tr '"' " " >> ${serviceImagesFile}
     result=$(cat ${serviceImagesFile} | wc -l)
     rm --force ${serviceImagesFile}
 
@@ -459,14 +464,14 @@ $(docker images --format "table {{.Repository}}:{{.Tag}}\t{{.ID}}" | grep -P "(a
 }
 
 downloadComposeFilesIfMissing() {
-    if [[ ! -f "${MAIN_YML}" ]]; then
-        wget -O "${MAIN_YML}" -q https://raw.githubusercontent.com/MeterianHQ/docker-scanner-engine/master/docker-compose.yml
-        log "Downloaded docker-compose.yml\nfolder content:\n$(ls -l ${MAIN_YML})\n" "-ne"
+    if [[ ! -f "${DOCKER_COMPOSE_YML}" ]]; then
+        wget -O "${DOCKER_COMPOSE_YML}" -q https://raw.githubusercontent.com/MeterianHQ/docker-scanner-engine/master/${DOCKER_COMPOSE_YML_FILENAME}
+        log "Downloaded ${DOCKER_COMPOSE_YML_FILENAME}\nfolder content:\n$(ls -l ${DOCKER_COMPOSE_YML})\n" "-ne"
     fi
 
     if [[ ! -f "${ANCHORE_YML}" ]]; then
-        wget -O "${ANCHORE_YML}" -q https://raw.githubusercontent.com/MeterianHQ/docker-scanner-engine/master/anchore-engine-configuration.yml
-        log "Downloaded docker-compose.yml\nfolder content:\n$(ls -l ${ANCHORE_YML})\n" "-ne"
+        wget -O "${ANCHORE_YML}" -q https://raw.githubusercontent.com/MeterianHQ/docker-scanner-engine/master/${ANCHORE_YML_FILENAME}
+        log "Downloaded ${DOCKER_COMPOSE_YML_FILENAME}\nfolder content:\n$(ls -l ${ANCHORE_YML})\n" "-ne"
     fi
 }
 
@@ -474,7 +479,7 @@ areAllServiceImagesInstalled() {
     downloadComposeFilesIfMissing
     # gather full images names from docker compose files in a file
     serviceImagesFile="images.tmp"
-    grep -oP "image:\s+\K.*" ${MAIN_YML} | tr '"' " " >> ${serviceImagesFile} \
+    grep -oP "image:\s+\K.*" ${DOCKER_COMPOSE_YML} | tr '"' " " >> ${serviceImagesFile} \
     && grep -oP "image:\s+\K.*" ${ANCHORE_YML} | tr '"' " " >> ${serviceImagesFile}
 
     # check that each image results installed - hence has an image id
