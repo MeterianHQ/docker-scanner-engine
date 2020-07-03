@@ -5,7 +5,7 @@ set -u
 set -o pipefail
 
 PRG_NAME="Docker Scanner Engine"
-VERSION="0.9.2"
+VERSION="0.9.3"
 DC_PROJECT_NAME="dse" # Docker Compose Project Name
 if [[ -z "${METERIAN_ENV:-}" ]]; then
     export METERIAN_ENV="www"
@@ -19,7 +19,7 @@ ISO_LOCAL_DATE="%Y-%m-%d"
 
 METERIAN_USER_DIR="${HOME}/.meterian/dse"
 DIAGNOSIS_FILE="${METERIAN_USER_DIR}/system.log"
-MAX_SYSLOG_FILE_SIZE=500000
+MAX_SYSLOG_FILE_SIZE=1000000
 
 DOCKER_COMPOSE_YML_FILENAME="docker-compose.yml"
 DOCKER_COMPOSE_YML="${METERIAN_USER_DIR}/${DOCKER_COMPOSE_YML_FILENAME}"
@@ -45,7 +45,8 @@ function run_cmd {
 
 exportDockerBin() {
     dockerBin="$(which docker)"
-    if [[ "${dockerBin}" =~ snap ]]; then
+    reg='snap'
+    if [[ "${dockerBin}" =~ $reg ]]; then
         export DSE_DOCKER_BIN="/snap/docker/current/bin/docker"
     else
         export DSE_DOCKER_BIN="${dockerBin}"
@@ -114,7 +115,9 @@ truncateSysLog() {
 
 prepareDiagnosisFile() {
     mkdir -p "${METERIAN_USER_DIR}"
-    touch "${DIAGNOSIS_FILE}"
+    if [[ ! -f ${DIAGNOSIS_FILE} ]]; then
+        touch "${DIAGNOSIS_FILE}"
+    fi
 
     truncateSysLog
     execAndLog checkThatDockerAndDockerComposeAreInstalled
@@ -131,7 +134,8 @@ prepareDiagnosisFile
 
 dockerCompose() {
     anchore_engine_conf=""
-    if [[ "${1}" =~ "pull" ]]; then
+    reg='pull'
+    if [[ "${1}" =~ $reg ]]; then
         anchore_engine_conf="-f ${ANCHORE_YML_FILENAME}"
     fi
 
@@ -158,25 +162,26 @@ trap onExit EXIT
 #TODO properly implement update
 showUsageText() {
     cat << HEREDOC
-        Usage: $0 <command> [<args>]
+Usage: $0 <command> [<args>] [options...]
 
-        Commands:
-        install           Install $PRG_NAME
-        scan              Scan a specific docker image,
-                           e.g. $0 scan image:tag
-        startup           Start up all services needed for ${PRG_NAME} to function
-        shutdown          Stop all services associated to ${PRG_NAME}
-        list-services     List all services
-        log-service       Allows to view the logs of a specific service
-                           e.g. $0 log-service service_name
-        scan-status       View the status of running scan
-                           e.g. $0 scan-status image:tag
-        version           Shows the current ${PRG_NAME} version
-        restart           Restart ${PRG_NAME}
-        update            Update program files and databases
-        diagnose          Diagnose the application
-        system-cleanup    Perform an application system clean up
-        help              Print usage manual
+Commands:
+install           Install $PRG_NAME
+scan              Scan a specific docker image,
+                    e.g. $0 scan image:tag [--min-security 90 --min-stability 80 --min-licensing 70]
+startup           Start up all services needed for ${PRG_NAME} to function
+shutdown          Stop all services associated to ${PRG_NAME}
+list-services     List all services
+log-service       Allows to view the logs of a specific service
+                    e.g. $0 log-service service_name
+scan-status       View the status of running scan
+                    e.g. $0 scan-status image:tag
+version           Shows the current ${PRG_NAME} version
+restart           Restart ${PRG_NAME}
+update            Update program files and databases
+diagnose          Diagnose the application
+system-cleanup    Perform an application system clean up
+help              Print usage manual
+
 HEREDOC
 }
 
@@ -195,7 +200,7 @@ validateDockerImageName() {
 apiScan() {
     image=${1}
     log "Requesting scan for ${image}..."
-    curl -X POST "http://localhost:8765/v1/docker/scans?name=${image}" >> ${DIAGNOSIS_FILE} 2> /dev/null
+    curl -sS -X POST "http://localhost:8765/v1/docker/scans?name=${image}" >> ${DIAGNOSIS_FILE} 2>&1
 }
 
 apiScanProgressMessage() {
@@ -204,7 +209,7 @@ apiScanProgressMessage() {
     outputFile="scan-status-msg.tmp"
     rm --force "${outputFile}"
     log "Requesting scan progress message for ${image}..."
-    curl -o "${outputFile}" "http://localhost:8765/v1/docker/scans?name=${image}&fmt=txt" 2> /dev/null
+    curl -sS -o "${outputFile}" "http://localhost:8765/v1/docker/scans?name=${image}&what=message&fmt=txt" 2>> ${DIAGNOSIS_FILE}
     progressMessage="$(cat ${outputFile})"
     log "\"${progressMessage}\""
     rm --force "${outputFile}"
@@ -218,7 +223,7 @@ getScanStatus() {
 
     rm --force "${outputFile}"
     log "Requesting scan status for ${image}..."
-    curl -o "${outputFile}" "http://localhost:8765/v1/docker/scans?name=${image}&status=true" 2> /dev/null
+    curl -sS -o "${outputFile}" "http://localhost:8765/v1/docker/scans?name=${image}&what=status&fmt=txt" 2>> ${DIAGNOSIS_FILE}
     status=$(cat ${outputFile})
     log "\"${status}\""
     rm --force "${outputFile}"
@@ -243,16 +248,126 @@ periodicScanStatusUpdate() {
     done
 }
 
+#TODO move these global variables up
+MIN_SECURITY=""
+MIN_STABILITY=""
+MIN_LICENSING=""
+
+isNumeric() {
+    maybeNumber="${1}"
+    reg='^[+-]?[0-9]+([.][0-9]+)?$'
+    if ! [[ ${maybeNumber} =~ $reg ]] ; then
+        return 1
+    fi
+
+    return 0
+}
+
+# TODO refactor block below having the numeric check happen in retrieveMinScoresForRemoteAnalysis
+validateScanOptions() {
+    maybeUnknownOption=${1:-}
+    # here I'm gonna check if any of the global MIN_... scores has been set at all
+    # if at least one is set we proceed normally
+    if [[ -z "${MIN_SECURITY}" && -z "${MIN_STABILITY}" && -z "${MIN_LICENSING}" ]];then
+        if [[ -n "${maybeUnknownOption}" ]]; then
+            printAndLog "Unknown option passed for scan: "${maybeUnknownOption}""
+            exit -1
+        fi
+    elif [[ -n "${MIN_SECURITY}" ]]; then
+        exitCode=0
+        isNumeric ${MIN_SECURITY} || exitCode=$?
+        if [[ "${exitCode}" != "0" ]]; then
+            printAndLog "Non-numeric values for the minimum score options are not valid"
+        else
+            if ((MIN_SECURITY < 0 && MIN_SECURITY > 100)); then
+                printAndLog "Acceptable values must be between 0 and 100"
+            fi
+        fi
+    elif [[ -n "${MIN_STABILITY}" ]]; then
+        exitCode=0
+        isNumeric ${MIN_STABILITY} || exitCode=$?
+        if [[ "${exitCode}" != "0" ]]; then
+            printAndLog "Non-numeric values for the minimum stability score options are not valid"
+        else
+            if ((MIN_STABILITY < 0 && MIN_STABILITY > 100)); then
+                printAndLog "Acceptable values must be between 0 and 100"
+            fi
+        fi
+    elif [[ -n "${MIN_LICENSING}" ]]; then
+        exitCode=0
+        isNumeric ${MIN_LICENSING} || exitCode=$?
+        if [[ "${exitCode}" != "0" ]]; then
+            printAndLog "Non-numeric values for the minimum score options are not valid"
+        else
+            if ((MIN_LICENSING < 0 && MIN_LICENSING > 100)); then
+                printAndLog "Acceptable values must be between 0 and 100"
+            fi
+        fi
+    fi
+}
+
+retrieveMinScoresForRemoteAnalysis() {
+    shift 2
+    if [[ -n "${*:-}" ]];then
+        log "Trying to parse options..."
+        while [[ "$#" -gt 0 ]]; do case $1 in
+            --min-security)    MIN_SECURITY=${2:-}; shift;;
+            --min-stability)   MIN_STABILITY=${2:-}; shift;;
+            --min-licensing)   MIN_LICENSING=${2:-}; shift;;
+            *)                 validateScanOptions; exit 0;;
+        esac; shift; done
+        log "Now exporting MIN_SECURITY (${MIN_SECURITY}), MIN_STABILITY (${MIN_STABILITY}) and MIN_LICENSING (${MIN_LICENSING}) scores as environment variables for docker compose to pick them up..."
+        export MIN_SECURITY=${MIN_SECURITY}
+        export MIN_STABILITY=${MIN_STABILITY}
+        export MIN_LICENSING=${MIN_LICENSING}
+    else 
+        log "No options passed for scan"
+    fi
+}
+
+queryAnalysisResult() {
+    query="${1}"
+    queryResult=""
+
+    outputFile="analysis-result.tmp"
+    rm --force "${outputFile}"
+    log "Requesting analysis result for ${image}..."
+    curl -sS -o "${outputFile}" "http://localhost:8765/v1/docker/scans?name=${image}&what=result&fmt=json" 2>> ${DIAGNOSIS_FILE}
+    result="$(cat ${outputFile})"
+    log "$(echo ${result})"
+    rm --force "${outputFile}"
+    
+    log "Retrieving ${query}..."
+    while [[ "$#" -gt 0 ]]; do case $1 in
+    securityScore)    queryResult="$(echo "${result}" | jq -r '.securityScore')" || true; ;;
+    stabilityScore)   queryResult="$(echo "${result}" | jq -r '.stabilityScore')" || true; ;;
+    licensingScore)   queryResult="$(echo "${result}" | jq -r '.licensingScore')" || true; ;;
+    exitcode)         queryResult="$(echo "${result}" | jq -r '.exitcode')" || true; ;;
+    failures)         queryResult="$(echo "${result}" | jq -r '.failures')" || true; ;;
+    url)              queryResult="$(echo "${result}" | jq -r '.url')" || true; ;;
+    *)                true; exit 0;;
+    esac; shift; done
+
+    log "Got: \"${queryResult}\""
+    echo "${queryResult}"
+}
+
 imageScan() {
     log "Scanning image: \"${1}\"..."
     image=$1
     execAndLog validateDockerImageName $image
     checkIfInstalled
-    execAndLog checkIfAllServicesAreUp
+    #execAndLog checkIfAllServicesAreUp #TODO uncomment  
+
+    log "Trying to retrieve min security, stability, and licensing scores parameters for scan remote analysis..."
+    retrieveMinScoresForRemoteAnalysis ${2}
+    log "Reloading services to update tied environment variables..."
+    #dockerCompose up -d >> ${DIAGNOSIS_FILE}
 
     printAndLog
-    printAndLog "$(_date) - Pulling \"${image}\"..."
+    printAndLog "Pulling \"${image}\"..."
     execAndLog docker pull "${image}"
+    printAndLog
     apiScan ${image}
     printAndLog "$(_date) - Scan for \"${image}\" has started"
     execAndLog periodicScanStatusUpdate "${image}" 2
@@ -261,7 +376,35 @@ imageScan() {
         log "Scan was unsuccessful, exiting with code: 255"
         exit -1
     fi
-    log "Scan was successful, exiting with code: 0"
+
+    log "Scan was successful"
+    log "Printing remote analysis results..."
+    
+    printAndLog
+    printAndLog "Final results:"
+    printAndLog "- security:\t"$(queryAnalysisResult securityScore)"\t(minimum: ${MIN_SECURITY:-"90"})\n" "-ne"
+    printAndLog "- stability:\t"$(queryAnalysisResult stabilityScore)"\t(minimum: ${MIN_STABILITY:-"80"})\n" "-ne"
+    printAndLog "- licensing:\t"$(queryAnalysisResult licensingScore)"\t(minimum: ${MIN_LICENSING:-"95"})\n" "-ne"
+    printAndLog
+    printAndLog "Full report available at:"
+    printAndLog "$(queryAnalysisResult url)"
+
+    printAndLog
+    log "Retrieving analysis exit code..."
+    exitCode="$(queryAnalysisResult exitcode)"
+    log "Got: \"${exitCode}\""
+    if [[ "${exitCode}" == "0" ]]; then
+        printAndLog "Successful analysis!"
+    elif [[ -z "${exitCode}" ]]; then
+        printAndLog "Unsuccessful analysis!"
+        exit -1
+    else 
+        printAndLog "Unsuccessful analysis!"
+        failedChecks="$(queryAnalysisResult failures)"
+        printAndLog "Failed checks: $(echo $failedChecks)"
+    fi
+    printAndLog
+    exit $exitCode
 }
 
 getServicesCount() {
@@ -301,7 +444,8 @@ checkIfAnyServicesAreUp() {
 healthCheck() {
     result=""
     curl_output=$(curl -s -L -I -X GET "localhost:8765/admin/healthcheck")
-    if [[ "$(echo ${curl_output} | head -n 1)" =~ "200" ]]; then
+    reg='200'
+    if [[ "$(echo ${curl_output} | head -n 1)" =~ $reg ]]; then
         result="OK"
     else
         result="NOT OK"
@@ -323,7 +467,7 @@ authenticate() {
     if [[ -n "${METERIAN_API_TOKEN}" ]]; then
         echo "~~~ Authentication in progress"
 
-        domainUrl="https://${METERIAN_ENV}.meterian.com"
+        domainUrl="${METERIAN_ENV}.meterian.com"
         if [[ "$(checkDomainIsReachable ${domainUrl})" != "0" ]]; then
             echo "Authentication failed"
             echo "The domain \"$domainUrl\" is unreachable"
@@ -340,7 +484,8 @@ authenticate() {
         fi
 
         statusCode=$(echo ${response} | head -n 1)
-        if [[ "${statusCode}" =~ "200" ]]; then
+        reg='200'
+        if [[ "${statusCode}" =~ $reg ]]; then
             echo "Successfully authenticated!"
         else
             echo "Authentication failed"
@@ -535,6 +680,7 @@ diagnose() {
     - Do health check in here too
     - restart command
 '
+    echo "${PRG_NAME} v${VERSION}" # TODO se if we keeping this print here or moving under below line (What looks better pretty much)
     echo "Diagnosing..."
     echo -ne "Are all services installed? "
     if [[ "$(areAllServiceImagesInstalled)" == "0" ]];then
@@ -595,7 +741,7 @@ fi
 
 while [[ "$#" -gt 0 ]]; do case $1 in
   help)             showUsageText; exit 0 ;;
-  scan)             imageScan "${2:-}"; exit 0 ;;
+  scan)             imageScan "${2:-}" "${*}"; exit 0 ;;
   startup)          startupServices; exit 0 ;;
   shutdown)         shutdownServices; exit 0 ;;
   log-service)      logService "${2:-}"; exit 0 ;;
