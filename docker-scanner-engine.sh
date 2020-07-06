@@ -5,7 +5,7 @@ set -u
 set -o pipefail
 
 PRG_NAME="Docker Scanner Engine"
-VERSION="0.9.3"
+VERSION="0.9.4"
 DC_PROJECT_NAME="dse" # Docker Compose Project Name
 if [[ -z "${METERIAN_ENV:-}" ]]; then
     export METERIAN_ENV="www"
@@ -133,29 +133,41 @@ prepareDiagnosisFile() {
 prepareDiagnosisFile
 
 dockerCompose() {
+    log "Running docker compose command"
+    log "docker-compose '${*}'"
     anchore_engine_conf=""
     reg='pull'
+    log "Checking if main command ${1} equals to ${reg}..."
     if [[ "${1}" =~ $reg ]]; then
-        anchore_engine_conf="-f ${ANCHORE_YML_FILENAME}"
+        log "${reg} is the main docker-compose command, populatin anchore_engine_conf..."
+        anchore_engine_conf="-f ${METERIAN_USER_DIR}/${ANCHORE_YML_FILENAME}"
     fi
 
     if [[ "${DEV_MODE}" != "on" ]]; then
-        docker-compose --project-directory ${METERIAN_USER_DIR} -f ${DOCKER_COMPOSE_YML_FILENAME} ${anchore_engine_conf} --project-name ${DC_PROJECT_NAME} ${*}
+        docker-compose -f ${METERIAN_USER_DIR}/${DOCKER_COMPOSE_YML_FILENAME} ${anchore_engine_conf} --project-name ${DC_PROJECT_NAME} ${*}
     else
-        docker-compose --project-directory ${METERIAN_USER_DIR} -f docker-compose-dev.yml ${anchore_engine_conf} --project-name ${DC_PROJECT_NAME} ${*}
+        docker-compose -f ${METERIAN_USER_DIR}/docker-compose-dev.yml ${anchore_engine_conf} --project-name ${DC_PROJECT_NAME} ${*}
     fi
 }
 
 onExit() {
     # on exit routine
+    log "onExit routine taking place..."
+    log "Removing all remaining temporary files..."
+    rm -f ${METERIAN_USER_DIR}/*.tmp
     # truncate system log file
+    log "Truncating system log file..."
     truncateSysLog
 
     # save service scanner engine logs
     scanner_engine_log_file="${METERIAN_USER_DIR}/scanner_engine_$(_date "${ISO_LOCAL_DATE}").log"
+    log "Trying to save scanner-engine service logs to file: ${scanner_engine_log_file}"
     run_cmd "dockerCompose logs -t -f scanner-engine" 1 >> "${scanner_engine_log_file}" || true
-
-    # TODO remove any temporary file that is created for whatever reason by the script
+    if [[ -s ${scanner_engine_log_file} ]];then
+        log "Successfully saved ${scanner_engine_log_file}"
+    else
+        log "Could not save ${scanner_engine_log_file}"
+    fi
 }
 trap onExit EXIT
 
@@ -205,8 +217,8 @@ apiScan() {
 
 apiScanProgressMessage() {
     image=${1}
+    outputFile="${METERIAN_USER_DIR}/scan-status-msg.tmp"
 
-    outputFile="scan-status-msg.tmp"
     rm --force "${outputFile}"
     log "Requesting scan progress message for ${image}..."
     curl -sS -o "${outputFile}" "http://localhost:8765/v1/docker/scans?name=${image}&what=message&fmt=txt" 2>> ${DIAGNOSIS_FILE}
@@ -219,7 +231,7 @@ apiScanProgressMessage() {
 
 getScanStatus() {
     image=${1}
-    outputFile="scan-status.tmp"
+    outputFile="${METERIAN_USER_DIR}/scan-status.tmp"
 
     rm --force "${outputFile}"
     log "Requesting scan status for ${image}..."
@@ -248,7 +260,6 @@ periodicScanStatusUpdate() {
     done
 }
 
-#TODO move these global variables up
 MIN_SECURITY=""
 MIN_STABILITY=""
 MIN_LICENSING=""
@@ -263,7 +274,6 @@ isNumeric() {
     return 0
 }
 
-# TODO refactor block below having the numeric check happen in retrieveMinScoresForRemoteAnalysis
 validateScanOptions() {
     maybeUnknownOption=${1:-}
     # here I'm gonna check if any of the global MIN_... scores has been set at all
@@ -325,31 +335,30 @@ retrieveMinScoresForRemoteAnalysis() {
     fi
 }
 
-queryAnalysisResult() {
-    query="${1}"
-    queryResult=""
+getAnalysisResultText() {
+    outputFile="${METERIAN_USER_DIR}/analysis-result.tmp"
 
-    outputFile="analysis-result.tmp"
     rm --force "${outputFile}"
-    log "Requesting analysis result for ${image}..."
-    curl -sS -o "${outputFile}" "http://localhost:8765/v1/docker/scans?name=${image}&what=result&fmt=json" 2>> ${DIAGNOSIS_FILE}
+    log "Requesting analysis result text for ${image}..."
+    curl -sS -o "${outputFile}" "http://localhost:8765/v1/docker/scans?name=${image}&what=result&fmt=txt" 2>> ${DIAGNOSIS_FILE}
     result="$(cat ${outputFile})"
-    log "$(echo ${result})"
+    log "$(echo "${result}")"
     rm --force "${outputFile}"
-    
-    log "Retrieving ${query}..."
-    while [[ "$#" -gt 0 ]]; do case $1 in
-    securityScore)    queryResult="$(echo "${result}" | jq -r '.securityScore')" || true; ;;
-    stabilityScore)   queryResult="$(echo "${result}" | jq -r '.stabilityScore')" || true; ;;
-    licensingScore)   queryResult="$(echo "${result}" | jq -r '.licensingScore')" || true; ;;
-    exitcode)         queryResult="$(echo "${result}" | jq -r '.exitcode')" || true; ;;
-    failures)         queryResult="$(echo "${result}" | jq -r '.failures')" || true; ;;
-    url)              queryResult="$(echo "${result}" | jq -r '.url')" || true; ;;
-    *)                true; exit 0;;
-    esac; shift; done
 
-    log "Got: \"${queryResult}\""
-    echo "${queryResult}"
+    echo "${result}"
+}
+
+getAnalysisExitCode() {
+    outputFile="${METERIAN_USER_DIR}/analysis-exitcode-result.tmp"
+    
+    rm --force "${outputFile}"
+    log "Requesting analysis exitcode for ${image}..."
+    curl -sS -o "${outputFile}" "http://localhost:8765/v1/docker/scans?name=${image}&what=exitcode&fmt=txt" 2>> ${DIAGNOSIS_FILE}
+    result="$(cat ${outputFile})"
+    log "$(echo "${result}")"
+    rm --force "${outputFile}"
+
+    echo "${result}"
 }
 
 imageScan() {
@@ -357,16 +366,17 @@ imageScan() {
     image=$1
     execAndLog validateDockerImageName $image
     checkIfInstalled
-    #execAndLog checkIfAllServicesAreUp #TODO uncomment  
+    execAndLog checkIfAllServicesAreUp
 
     log "Trying to retrieve min security, stability, and licensing scores parameters for scan remote analysis..."
     retrieveMinScoresForRemoteAnalysis ${2}
     log "Reloading services to update tied environment variables..."
-    #dockerCompose up -d >> ${DIAGNOSIS_FILE}
+    echo "Reloading services..."
+    dockerCompose up -d >> ${DIAGNOSIS_FILE} 2>&1
 
     printAndLog
     printAndLog "Pulling \"${image}\"..."
-    execAndLog docker pull "${image}"
+    docker pull "${image}" 2>> ${DIAGNOSIS_FILE}
     printAndLog
     apiScan ${image}
     printAndLog "$(_date) - Scan for \"${image}\" has started"
@@ -381,36 +391,19 @@ imageScan() {
     log "Printing remote analysis results..."
     
     printAndLog
-    printAndLog "Final results:"
-    printAndLog "- security:\t"$(queryAnalysisResult securityScore)"\t(minimum: ${MIN_SECURITY:-"90"})\n" "-ne"
-    printAndLog "- stability:\t"$(queryAnalysisResult stabilityScore)"\t(minimum: ${MIN_STABILITY:-"80"})\n" "-ne"
-    printAndLog "- licensing:\t"$(queryAnalysisResult licensingScore)"\t(minimum: ${MIN_LICENSING:-"95"})\n" "-ne"
+    printAndLog "$(getAnalysisResultText)"
     printAndLog
-    printAndLog "Full report available at:"
-    printAndLog "$(queryAnalysisResult url)"
 
-    printAndLog
     log "Retrieving analysis exit code..."
-    exitCode="$(queryAnalysisResult exitcode)"
+    exitCode="$(getAnalysisExitCode)"
     log "Got: \"${exitCode}\""
-    if [[ "${exitCode}" == "0" ]]; then
-        printAndLog "Successful analysis!"
-    elif [[ -z "${exitCode}" ]]; then
-        printAndLog "Unsuccessful analysis!"
-        exit -1
-    else 
-        printAndLog "Unsuccessful analysis!"
-        failedChecks="$(queryAnalysisResult failures)"
-        printAndLog "Failed checks: $(echo $failedChecks)"
-    fi
-    printAndLog
     exit $exitCode
 }
 
 getServicesCount() {
     downloadComposeFilesIfMissing
     # gather full images names from docker compose files in a file
-    serviceImagesFile="images.tmp"
+    serviceImagesFile="${METERIAN_USER_DIR}/images.tmp"
     grep -oP "image:\s+\K.*" ${DOCKER_COMPOSE_YML} | tr '"' " " >> ${serviceImagesFile}
     result=$(cat ${serviceImagesFile} | wc -l)
     rm --force ${serviceImagesFile}
@@ -459,7 +452,7 @@ checkDomainIsReachable () {
     timeOut=${2:-"30"}
 
     exitCode=0
-    curl -s -L -I ${domain} --connect-timeout ${timeOut} >> ${DIAGNOSIS_FILE} 2> /dev/null || exitCode=$?
+    curl -sS -L -I ${domain} --connect-timeout ${timeOut} >> ${DIAGNOSIS_FILE} 2>&1 || exitCode=$?
     echo "${exitCode}"
 }
 
@@ -623,7 +616,7 @@ downloadComposeFilesIfMissing() {
 areAllServiceImagesInstalled() {
     downloadComposeFilesIfMissing
     # gather full images names from docker compose files in a file
-    serviceImagesFile="images.tmp"
+    serviceImagesFile="${METERIAN_USER_DIR}/images.tmp"
     grep -oP "image:\s+\K.*" ${DOCKER_COMPOSE_YML} | tr '"' " " >> ${serviceImagesFile} \
     && grep -oP "image:\s+\K.*" ${ANCHORE_YML} | tr '"' " " >> ${serviceImagesFile}
 
