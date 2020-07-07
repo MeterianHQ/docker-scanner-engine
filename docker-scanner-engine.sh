@@ -417,6 +417,7 @@ imageScan() {
         isImageBuiltLocally "${image}" || exitCode=$?
         if [[ "${exitCode}" == "1" ]];then
             log "$image is not built locally, aborting..."
+            printAndLog "Image ${image} was not found"
             exit -1
         fi
     else
