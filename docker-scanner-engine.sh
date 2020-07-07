@@ -181,12 +181,11 @@ scan              Scan a specific docker image,
                     e.g. $0 scan bash:latest [--min-security 90 --min-stability 80 --min-licensing 70]
 startup           Start up all services needed for ${PRG_NAME} to function
 shutdown          Stop all services associated to ${PRG_NAME}
-scan-status       View the status of running scan
-                    e.g. $0 scan-status image:tag
 version           Shows the current ${PRG_NAME} version
 restart           Restart ${PRG_NAME}
 update            Update program files and databases
 diagnose          Diagnose the application
+status            Check the application status
 help              Print usage manual
 
 HEREDOC
@@ -802,6 +801,5 @@ while [[ "$#" -gt 0 ]]; do case $1 in
   update)           updatePrgFilesAndDb; exit 0 ;;
   diagnose)         diagnose; exit 0 ;;
   status)           status; exit 0;;
-  docker)           shift; dockerCompose $*; exit;; # TODO remove - introduced it just to test some stuff
   *) echo "Unknown command: $1"; exit -1 ;;
 esac; shift; done
