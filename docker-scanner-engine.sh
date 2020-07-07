@@ -5,7 +5,7 @@ set -u
 set -o pipefail
 
 PRG_NAME="Docker Scanner Engine"
-VERSION="0.9.4"
+VERSION="0.9.5"
 DC_PROJECT_NAME="dse" # Docker Compose Project Name
 if [[ -z "${METERIAN_ENV:-}" ]]; then
     export METERIAN_ENV="www"
@@ -171,7 +171,6 @@ onExit() {
 }
 trap onExit EXIT
 
-#TODO properly implement update
 showUsageText() {
     cat << HEREDOC
 Usage: $0 <command> [<args>] [options...]
@@ -179,19 +178,15 @@ Usage: $0 <command> [<args>] [options...]
 Commands:
 install           Install $PRG_NAME
 scan              Scan a specific docker image,
-                    e.g. $0 scan image:tag [--min-security 90 --min-stability 80 --min-licensing 70]
+                    e.g. $0 scan bash:latest [--min-security 90 --min-stability 80 --min-licensing 70]
 startup           Start up all services needed for ${PRG_NAME} to function
 shutdown          Stop all services associated to ${PRG_NAME}
-list-services     List all services
-log-service       Allows to view the logs of a specific service
-                    e.g. $0 log-service service_name
 scan-status       View the status of running scan
                     e.g. $0 scan-status image:tag
 version           Shows the current ${PRG_NAME} version
 restart           Restart ${PRG_NAME}
 update            Update program files and databases
 diagnose          Diagnose the application
-system-cleanup    Perform an application system clean up
 help              Print usage manual
 
 HEREDOC
@@ -361,6 +356,45 @@ getAnalysisExitCode() {
     echo "${result}"
 }
 
+canPullImage() {
+    log "Checking if $1 can be pulled from dockerHub"
+    imageAndTagParsedForApiCall=$(echo "${1}" | sed "s/\:/\/tags\//")
+    endpoints=(
+        "https://hub.docker.com/v2/repositories/library/$imageAndTagParsedForApiCall"
+        "https://hub.docker.com/v2/repositories/$imageAndTagParsedForApiCall"
+    )
+
+    reg='200'
+    result=0;
+    for endpoint in "${endpoints[@]}"
+    do
+        log "checking $endpoint"
+        curl_output=$(curl -s -L -I -X GET "${endpoint}")
+        if [[ "$(echo ${curl_output} | head -n 1)" =~ $reg ]]; then
+            log "$1 can be pulled through endpoint $endpoint"
+            result=0
+            break
+        else
+            log "$1 cannot be pulled through endpoint $endpoint"
+            result=1
+            continue
+        fi
+    done
+
+    return $result
+}
+
+isImageBuiltLocally() {
+    result=0
+    if [[ -n "$(docker images "${1}" -q)" ]]; then
+        result=0
+    else 
+        result=1
+    fi
+
+    return $result
+}
+
 imageScan() {
     log "Scanning image: \"${1}\"..."
     image=$1
@@ -373,11 +407,25 @@ imageScan() {
     log "Reloading services to update tied environment variables..."
     echo "Reloading services..."
     dockerCompose up -d >> ${DIAGNOSIS_FILE} 2>&1
+    printAndLog
 
-    printAndLog
-    printAndLog "Pulling \"${image}\"..."
-    docker pull "${image}" 2>> ${DIAGNOSIS_FILE}
-    printAndLog
+    # Checking if image can be pulled or whether it is build locally
+    exitCode=0
+    canPullImage "${image}" || exitCode=$?
+    if [[ "${exitCode}" == "1" ]];then
+        log "$image cannot be pulled, verifying if it's built locally"
+        exitCode=0
+        isImageBuiltLocally "${image}" || exitCode=$?
+        if [[ "${exitCode}" == "1" ]];then
+            log "$image is not built locally, aborting..."
+            exit -1
+        fi
+    else
+        printAndLog "Pulling \"${image}\"..."
+        docker pull "${image}" 2>> ${DIAGNOSIS_FILE}
+        printAndLog
+    fi
+    
     apiScan ${image}
     printAndLog "$(_date) - Scan for \"${image}\" has started"
     execAndLog periodicScanStatusUpdate "${image}" 2
@@ -415,7 +463,7 @@ checkIfAllServicesAreUp() {
     echo "~~~ Checking if services are up"
 
     expected_services=$(getServicesCount)
-    services_count=$(dockerCompose ps -q | wc -l)
+    services_count=$(dockerCompose ps --services --filter "status=running" | wc -l)
     if [[ ${expected_services} -ne ${services_count} ]]; then
         echo "Services are not up and running"
         echo "  to start up services run:"
@@ -539,13 +587,12 @@ startupServices() {
         printAndLog "The services are up and healthy\n\n" "-ne"
         printAndLog "Image scans are allowed!"
     else
-        # TODO change bit below to invite the user to use the diagnose command
         printAndLog "The services are up but unhealthy"
         printAndLog "Cannot allow scans to run at this moment"
         printAndLog ""
-        listServices
-        printAndLog "\nTo view logs for a specific service run:" "-ne"
-        printAndLog "  e.g. $0 log-service service_name"
+        dockerCompose ps >> ${DIAGNOSIS_FILE} 2>&1
+        printAndLog "To perform diagnosis run:"
+        printAndLog "  e.g. $0 diagnose"
     fi
 }
 
@@ -555,35 +602,17 @@ shutdownServices() {
     ( exit $(checkIfAnyServicesAreUp) ) # check if any services are up and exit if there's none
     log "Services are up - proceeding with shutdown"
 
-    exitCode=${1:-"0"}
     printAndLog "~~~ Shutting down all services"
     execAndLog dockerCompose down
     printAndLog "Done."
+}
 
+shutdownServicesAndExit() {
+    shutdownServices
+
+    exitCode=${1:-"0"}
     log "Exiting with code ${exitCode}"
     exit ${exitCode}
-}
-
-logService() {
-    checkIfInstalled
-
-    service="${1}"
-    docker logs -f -t ${service}
-}
-
-#TODO deprecate
-checkScanStatus() {
-    checkIfInstalled
-    result=$(checkIfAllServicesAreUp) # silently check if services are up
-
-    image=$1
-    curl -X GET "localhost:8765/v1/docker/scans?name=${image}"
-}
-
-listServices() {
-    checkIfInstalled
-    log "Requested list of all running services"
-    execAndLog dockerCompose ps
 }
 
 checkIfInstalled() {
@@ -609,7 +638,7 @@ downloadComposeFilesIfMissing() {
 
     if [[ ! -f "${ANCHORE_YML}" ]]; then
         wget -O "${ANCHORE_YML}" -q https://raw.githubusercontent.com/MeterianHQ/docker-scanner-engine/master/${ANCHORE_YML_FILENAME}
-        log "Downloaded ${DOCKER_COMPOSE_YML_FILENAME}\nfolder content:\n$(ls -l ${ANCHORE_YML})\n" "-ne"
+        log "Downloaded ${ANCHORE_YML_FILENAME}\nfolder content:\n$(ls -l ${ANCHORE_YML})\n" "-ne"
     fi
 }
 
@@ -653,74 +682,104 @@ install() {
 
 restart() {
     printAndLog "Restarting ${PRG_NAME}..."
-    shutdownServices
+    exitCode=0
+    checkIfAnyServicesAreUp || exitCode=$?
+    if [[ "${exitCode}" == "0" ]]; then
+        shutdownServices
+    fi
     startupServices
 }
 
 updatePrgFilesAndDb() {
     printAndLog "Updating program files and database..."
     downloadComposeFilesIfMissing
-    execAndLog dockerCompose pull clair-db inline-scan
+    execAndLog dockerCompose pull
+    restart
+}
+
+zipLogs() {
+    # zipping logs to current folder
+    scanner_engine_log_file="${METERIAN_USER_DIR}/scanner_engine_$(_date "${ISO_LOCAL_DATE}").log"
+    diagnosisDumpDir="${METERIAN_USER_DIR}/archives-dir"
+    mkdir -p "${diagnosisDumpDir}"
+    rm -f ${diagnosisDumpDir}/*
+
+    cp ${DIAGNOSIS_FILE} "${diagnosisDumpDir}/"
+    cp ${scanner_engine_log_file} "${diagnosisDumpDir}/"
+
+    zipExitCode=1
+    ( cd ${diagnosisDumpDir} ; zip -r "system-logs.zip" . * >> /dev/null 2>&1 ) || zipExitCode=${?}
+    if [[ -s "${diagnosisDumpDir}/system-logs.zip" ]]; then
+        zipExitCode=0
+    fi
+
+    if [[ "${zipExitCode}" != "0" ]]; then
+        cp ${diagnosisDumpDir}/* $(pwd)
+        printAndLog "System log files available here: $(pwd)/"
+    else
+        rm -f ${diagnosisDumpDir}/*.log
+        cp "${diagnosisDumpDir}/system-logs.zip" $(pwd)
+        printAndLog "zip file with system logs available here: $(pwd)/system-logs.zip"
+    fi
 }
 
 diagnose() {
 # (to grep everything but debug logs  docker logs -f -t dse_scanner-engine_1 | grep -P '^(?!.*DEBUG).*$')
-# TODO print diagnosis relevant to last execution ??
-: '
-    - ideally save last exit code to file (in ~/.meterian/dse) and when asked for diagnosis print relevant message
-    related to last execution exit code and save all logs in a zip file and tell user in the same message that
-    the latter was saved
-    - Do health check in here too
-    - restart command
-'
-    echo "${PRG_NAME} v${VERSION}" # TODO se if we keeping this print here or moving under below line (What looks better pretty much)
-    echo "Diagnosing..."
-    echo -ne "Are all services installed? "
+    log "Requested diagnosis:"
+    printAndLog "${PRG_NAME} v${VERSION}"
+    printAndLog "Diagnosing..."
+    printAndLog "Are all services installed? " "-ne"
     if [[ "$(areAllServiceImagesInstalled)" == "0" ]];then
-        echo "YES"
-        echo "Services health is: "$(healthCheck)""
-        echo "Displaying running services..."
-        echo
-        dockerCompose ps
-        echo
+        printAndLog "YES"
 
-        # here we could maybe provide info on last execution by retrieving the last exit code
-        echo "Last execution finished with exit code: x"
-        echo "x: \"Something something something\""
-        # here is some instances we could suggest to restart the $0 restart
-        echo
+        statusResult=$(status)
+        printAndLog "Are services up? " "-ne"
+        if [[ "${statusResult}" == "UP" ]]; then
+            printAndLog "YES"
 
-        scanner_engine_log_file="${METERIAN_USER_DIR}/scanner_engine_$(_date "${ISO_LOCAL_DATE}").log"
-        diagnosisDumpDir="${HOME}/.$(echo ${PRG_NAME} | tr '[:upper:]' '[:lower:]' |tr ' ' '_')"
-        mkdir -p "${diagnosisDumpDir}"
-        rm -f ${diagnosisDumpDir}/*
+            log "Displaying running services..."
+            dockerCompose ps >> ${DIAGNOSIS_FILE} 2>&1
+            printAndLog "Are services healthy? " "-ne"
+            if [[ "$(healthCheck)" == "OK" ]]; then
+                printAndLog "YES"
+            else
+                printAndLog "NO"
+                printAndLog "Try restarting $PRG_NAME:"
+                printAndLog "   $0 restart"
+                printAndLog "If this issue persists please reach out to Meterian support line"
+                zipLogs
+            fi
 
-        cp ${DIAGNOSIS_FILE} "${diagnosisDumpDir}/"
-        cp ${scanner_engine_log_file} "${diagnosisDumpDir}/"
-
-        zipExitCode=0
-        ( cd ${diagnosisDumpDir} ; zip -r "system-logs.zip" . * >> /dev/null 2>&1 ) || zipExitCode=${?}
-
-        if [[ "${zipExitCode}" != "0" ]]; then
-            echo "System log files available here: ${diagnosisDumpDir}/"
         else
-            rm -f ${diagnosisDumpDir}/*.log
-            echo "zip file with system logs available here: ${diagnosisDumpDir}/system-logs.zip"
+            printAndLog "NO"
+            printAndLog "To startup run the following:"
+            printAndLog "   $0 startup"
         fi
 
     else
-        echo "NO"
+        printAndLog "NO"
+        printAndLog "Consider installing $PRG_NAME first by running the install command:"
+        printAndLog "   $0 install"
     fi
 }
 
-sysCleanUp() {
-    printAndLog "Application system clean up in progress..."
-    downloadComposeFilesIfMissing
-    log "Removing all one-off containers"
-    dockerCompose rm --force >> ${DIAGNOSIS_FILE} 2>&1
-    log "Removing all related docker containers"
-    dockerCompose rm --stop --force -v scanner-engine clair-db clair-server clair-scanner >> ${DIAGNOSIS_FILE} 2>&1
-    printAndLog "Done."
+status() {
+    log "System status requested"
+    expected_services=$(getServicesCount)
+    services_count=$(dockerCompose ps --services --filter "status=running"  | wc -l)
+    if [[ ${expected_services} -ne ${services_count} ]]; then
+        log "All services are not up"
+        dockerCompose ps >> ${DIAGNOSIS_FILE} 2>&1
+        printAndLog "DOWN"
+    else
+        log "All services are up"
+        if [[ "$(healthCheck)" == "OK" ]]; then
+            log "All services are healthy"
+            printAndLog "UP"
+        else
+            printAndLog "DOWN"
+        fi
+    fi
 }
 
 # echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
@@ -736,15 +795,13 @@ while [[ "$#" -gt 0 ]]; do case $1 in
   help)             showUsageText; exit 0 ;;
   scan)             imageScan "${2:-}" "${*}"; exit 0 ;;
   startup)          startupServices; exit 0 ;;
-  shutdown)         shutdownServices; exit 0 ;;
-  log-service)      logService "${2:-}"; exit 0 ;;
-  scan-status)      checkScanStatus "${2:-}"; exit 0 ;;
-  list-services)    listServices; exit 0 ;;
+  shutdown)         shutdownServicesAndExit; exit 0 ;;
   install)          install; exit 0 ;;
   version)          echo "${PRG_NAME} v${VERSION}"; ;;
   restart)          restart; exit 0 ;;
   update)           updatePrgFilesAndDb; exit 0 ;;
   diagnose)         diagnose; exit 0 ;;
-  system-cleanup)   sysCleanUp; exit 0;;
+  status)           status; exit 0;;
+  docker)           shift; dockerCompose $*; exit;; # TODO remove - introduced it just to test some stuff
   *) echo "Unknown command: $1"; exit -1 ;;
 esac; shift; done
