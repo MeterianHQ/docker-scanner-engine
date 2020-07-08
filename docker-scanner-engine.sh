@@ -383,7 +383,7 @@ canPullImage() {
     return $result
 }
 
-isImageBuiltLocally() {
+isImageAvailableLocally() {
     result=0
     if [[ -n "$(docker images "${1}" -q)" ]]; then
         result=0
@@ -404,26 +404,64 @@ imageScan() {
     log "Trying to retrieve min security, stability, and licensing scores parameters for scan remote analysis..."
     retrieveMinScoresForRemoteAnalysis ${2}
     log "Reloading services to update tied environment variables..."
-    echo "Reloading services..."
     dockerCompose up -d >> ${DIAGNOSIS_FILE} 2>&1
     printAndLog
 
     # Checking if image can be pulled or whether it is build locally
+    # exitCode=0
+    # canPullImage "${image}" || exitCode=$?
+    # if [[ "${exitCode}" == "1" ]];then
+    #     log "$image cannot be pulled, verifying if it's built locally"
+    #     exitCode=0
+    #     isImageAvailableLocally "${image}" || exitCode=$?
+    #     if [[ "${exitCode}" == "1" ]];then
+    #         log "$image is not built locally, aborting..."
+    #         printAndLog "Image ${image} was not found"
+    #         exit -1
+    #     fi
+    # else
+    #     reg='--pull'
+    #     log "'\$*' at this point is ${*}"
+    #     if [[ "${*}" =~ $reg ]]; then
+    #         log "Presented --pull flag, no pulling image..."
+    #         printAndLog "Pulling \"${image}\"..."
+    #         docker pull "${image}" 2>> ${DIAGNOSIS_FILE}
+    #         printAndLog
+    #     else
+    #         log "No --pull flag present, checking if ${image} is present locally..."
+    #     fi
+    # fi
+
     exitCode=0
-    canPullImage "${image}" || exitCode=$?
+    isImageAvailableLocally "${image}" || exitCode=$?
     if [[ "${exitCode}" == "1" ]];then
-        log "$image cannot be pulled, verifying if it's built locally"
-        exitCode=0
-        isImageBuiltLocally "${image}" || exitCode=$?
-        if [[ "${exitCode}" == "1" ]];then
-            log "$image is not built locally, aborting..."
-            printAndLog "Image ${image} was not found"
+        log "$image is not available locally, checking if it can be pulled instead"
+
+        reg='--pull'
+        log "'\$*' at this point is ${*}"
+        if [[ "${*}" =~ $reg ]];then
+            log "Presented --pull flag, now checking if it can be pulled..."
+
+            exitCode=0
+            canPullImage "${image}" || exitCode=$?
+            if [[ "${exitCode}" == "1" ]];then
+                log "$image cannot be pulled either."
+                printAndLog "Image ${image} was not found"
+                exit -1
+            else
+                printAndLog "Pulling \"${image}\"..."
+                docker pull "${image}" 2>> ${DIAGNOSIS_FILE}
+                printAndLog
+            fi
+        else
+            log "No --pull flag present, checking if ${image} is present locally..."
+            printAndLog "Image ${image} was not found locally"
+            printAndLog "Specify the flag --pull if you want to pull it:"
+            printAndLog "   $0 scan ${image} --pull"
             exit -1
         fi
     else
-        printAndLog "Pulling \"${image}\"..."
-        docker pull "${image}" 2>> ${DIAGNOSIS_FILE}
-        printAndLog
+        log "Image ${image} was found locally, proceeding with scan"
     fi
     
     apiScan ${image}
