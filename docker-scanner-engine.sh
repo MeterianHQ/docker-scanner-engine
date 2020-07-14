@@ -85,18 +85,13 @@ checkIfCurlIsInstalled() {
         echo "Error: curl is not installed"
         exit -1
     fi
+    set -e
     log "curl is installed"
 }
 
 checkThatDockerAndDockerComposeAreInstalled() {
     log "Checking if docker and docker-compose are installed..."
     set +e
-    docker --version >>/dev/null 2>&1
-    exitCode=$?
-    if [[ "${exitCode}" != "0" ]]; then
-        echo "Error: docker is not installed"
-        exit -1
-    fi
 
     docker-compose --version >>/dev/null 2>&1
     exitCode=$?
@@ -104,6 +99,24 @@ checkThatDockerAndDockerComposeAreInstalled() {
         echo "Error: docker-compose is not installed"
         exit -1
     fi
+
+    docker --version >>/dev/null 2>&1
+    exitCode=$?
+    if [[ "${exitCode}" != "0" ]]; then
+        echo "Error: docker is not installed"
+        exit -1
+    else
+        docker ps -a >>${DIAGNOSIS_FILE} 2>&1
+        exitCode=$?
+        if [[ "${exitCode}" != "0" ]]; then
+            echo "Error: docker is not setto be used as non-root user"
+            echo "Please ensure docker can be used non-root user:"
+            echo "  e.g. 'sudo setfacl --modify user:<user name or ID>:rw /var/run/docker.sock'"
+            exit -1
+        fi
+    fi
+
+    set -e
     log "Both are installed!"
 }
 
@@ -178,7 +191,7 @@ Usage: $0 <command> [<args>] [options...]
 Commands:
 install           Install $PRG_NAME
 scan              Scan a specific docker image,
-                    e.g. $0 scan bash:latest [--min-security 90 --min-stability 80 --min-licensing 70]
+                    e.g. $0 scan bash:latest [--min-security 90 --min-stability 80 --min-licensing 70] [--pull]
 startup           Start up all services needed for ${PRG_NAME} to function
 shutdown          Stop all services associated to ${PRG_NAME}
 version           Shows the current ${PRG_NAME} version
@@ -269,12 +282,19 @@ isNumeric() {
 }
 
 validateScanOptions() {
+    otherApprovedOptionsReg='(--pull)'
+    if [[ "${1}" =~ $otherApprovedOptionsReg ]]; then
+        return 0
+    fi
+
     maybeUnknownOption=${1:-}
     # here I'm gonna check if any of the global MIN_... scores has been set at all
     # if at least one is set we proceed normally
     if [[ -z "${MIN_SECURITY}" && -z "${MIN_STABILITY}" && -z "${MIN_LICENSING}" ]];then
         if [[ -n "${maybeUnknownOption}" ]]; then
             printAndLog "Unknown option passed for scan: "${maybeUnknownOption}""
+            printAndLog "Ensure the command is being executed correctly:"
+            printAndLog "   e.g. $0 scan bash:latest [--min-security 90 --min-stability 80 --min-licensing 70] [--pull]"
             exit -1
         fi
     elif [[ -n "${MIN_SECURITY}" ]]; then
@@ -314,11 +334,12 @@ retrieveMinScoresForRemoteAnalysis() {
     shift 2
     if [[ -n "${*:-}" ]];then
         log "Trying to parse options..."
+        log "Checking parameters passed $1"
         while [[ "$#" -gt 0 ]]; do case $1 in
             --min-security)    MIN_SECURITY=${2:-}; shift;;
             --min-stability)   MIN_STABILITY=${2:-}; shift;;
             --min-licensing)   MIN_LICENSING=${2:-}; shift;;
-            *)                 validateScanOptions; exit 0;;
+            *)                 log "Non matching parameter $1, now calling validateScanOptions()"; validateScanOptions $1; ;;
         esac; shift; done
         log "Now exporting MIN_SECURITY (${MIN_SECURITY}), MIN_STABILITY (${MIN_STABILITY}) and MIN_LICENSING (${MIN_LICENSING}) scores as environment variables for docker compose to pick them up..."
         export MIN_SECURITY=${MIN_SECURITY}
@@ -394,58 +415,23 @@ isImageAvailableLocally() {
     return $result
 }
 
-imageScan() {
-    log "Scanning image: \"${1}\"..."
-    image=$1
-    execAndLog validateDockerImageName $image
-    checkIfInstalled
-    execAndLog checkIfAllServicesAreUp
+checkImagePresenceAndPullIfRequested() {
+    image=${1}
 
-    log "Trying to retrieve min security, stability, and licensing scores parameters for scan remote analysis..."
-    retrieveMinScoresForRemoteAnalysis ${2}
-    log "Reloading services to update tied environment variables..."
-    dockerCompose up -d >> ${DIAGNOSIS_FILE} 2>&1
-    printAndLog
-
-    # Checking if image can be pulled or whether it is build locally
-    # exitCode=0
-    # canPullImage "${image}" || exitCode=$?
-    # if [[ "${exitCode}" == "1" ]];then
-    #     log "$image cannot be pulled, verifying if it's built locally"
-    #     exitCode=0
-    #     isImageAvailableLocally "${image}" || exitCode=$?
-    #     if [[ "${exitCode}" == "1" ]];then
-    #         log "$image is not built locally, aborting..."
-    #         printAndLog "Image ${image} was not found"
-    #         exit -1
-    #     fi
-    # else
-    #     reg='--pull'
-    #     log "'\$*' at this point is ${*}"
-    #     if [[ "${*}" =~ $reg ]]; then
-    #         log "Presented --pull flag, no pulling image..."
-    #         printAndLog "Pulling \"${image}\"..."
-    #         docker pull "${image}" 2>> ${DIAGNOSIS_FILE}
-    #         printAndLog
-    #     else
-    #         log "No --pull flag present, checking if ${image} is present locally..."
-    #     fi
-    # fi
-
+    reg='--pull'
     exitCode=0
     isImageAvailableLocally "${image}" || exitCode=$?
     if [[ "${exitCode}" == "1" ]];then
-        log "$image is not available locally, checking if it can be pulled instead"
+        log "$image is not available locally, checking if it can be pulled instead..."
 
-        reg='--pull'
-        log "'\$*' at this point is ${*}"
-        if [[ "${*}" =~ $reg ]];then
+        log "'\$*' at this point is ${2}"
+        if [[ "${2}" =~ $reg ]];then
             log "Presented --pull flag, now checking if it can be pulled..."
 
             exitCode=0
             canPullImage "${image}" || exitCode=$?
             if [[ "${exitCode}" == "1" ]];then
-                log "$image cannot be pulled either."
+                log "$image cannot be pulled either, aborting..."
                 printAndLog "Image ${image} was not found"
                 exit -1
             else
@@ -455,14 +441,45 @@ imageScan() {
             fi
         else
             log "No --pull flag present, checking if ${image} is present locally..."
+
             printAndLog "Image ${image} was not found locally"
             printAndLog "Specify the flag --pull if you want to pull it:"
             printAndLog "   $0 scan ${image} --pull"
             exit -1
         fi
     else
-        log "Image ${image} was found locally, proceeding with scan"
+        log "Image ${image} was found locally"
+
+        if [[ "${2}" =~ $reg ]];then
+            log "Presented --pull flag, now checking if it can be pulled..."
+
+            exitCode=0
+            canPullImage "${image}" || exitCode=$?
+            if [[ "${exitCode}" == "1" ]];then
+                log "$image cannot be pulled, must've been built locally, proceeding with scan..."
+            else
+                printAndLog "Pulling \"${image}\"..."
+                docker pull "${image}" 2>> ${DIAGNOSIS_FILE}
+                printAndLog
+            fi
+        fi
     fi
+}
+
+imageScan() {
+    log "Scanning image: \"${1}\"..."
+    image=$1
+    execAndLog validateDockerImageName $image
+    checkIfInstalled
+    execAndLog checkIfAllServicesAreUp
+    printAndLog
+
+    log "Trying to retrieve min security, stability, and licensing scores parameters for scan remote analysis..."
+    retrieveMinScoresForRemoteAnalysis ${2}
+    log "Reloading services to update tied environment variables..."
+    dockerCompose up -d >> ${DIAGNOSIS_FILE} 2>&1
+
+    checkImagePresenceAndPullIfRequested "${image}" "${2}"
     
     apiScan ${image}
     printAndLog "$(_date) - Scan for \"${image}\" has started"
@@ -611,7 +628,7 @@ startupServices() {
 
     printAndLog "Done."
     printAndLog "Updating the database..."
-    execAndLog dockerCompose pull clair-db inline-scan
+    execAndLog dockerCompose pull clair-db #inline-scan TODO uncomment
     printAndLog "Done."
     execAndLog dockerCompose up -d
 
@@ -766,6 +783,8 @@ diagnose() {
     log "Requested diagnosis:"
     printAndLog "${PRG_NAME} v${VERSION}"
     printAndLog "Diagnosing..."
+
+    # general checks
     printAndLog "Are all services installed? " "-ne"
     if [[ "$(areAllServiceImagesInstalled)" == "0" ]];then
         printAndLog "YES"

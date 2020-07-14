@@ -22,7 +22,7 @@ services:
             - MIN_LICENSING=${MIN_LICENSING:-95}
         ports:
             - "8765:8765"
-        networks_mode: "host"
+        network_mode: "host"
 
 # Clair specific configuration
     clair-db:
