@@ -9,6 +9,7 @@ services:
         image: meterian/cs-engine:latest
         depends_on: 
             - clair-scanner
+            - dagda-server
         volumes:
             - /var/run/docker.sock:/var/run/docker.sock
             - ${DSE_DOCKER_BIN}:${DSE_DOCKER_BIN}
@@ -26,11 +27,7 @@ services:
 
 # Clair specific configuration
     clair-db:
-        # investigate how we can ensure that the latest version of the db is always pulled
-        # as of issue https://github.com/docker/compose/issues/3574 closed in 2018 the only way to achieve this is by using `docker-compose pull && docker-compose up`.
-        # Addition of a pull_policy parameter to service definitions is still being considered :(
         image: arminc/clair-db:latest
-        #depends_on: scanner-engine
         networks:
             - clair-network
 
@@ -52,5 +49,27 @@ services:
             - clair-server
         network_mode: "service:clair-server"
 
+# Dagda specific configuration
+    dagda-server:
+        image: 3grander/dagda:0.8.0
+        networks:
+            - dagda-network
+        entrypoint: python dagda.py start -s 0.0.0.0 -p 5000 -m dagda-db -mp 27017
+        ports:
+            - "5000:5000"
+        volumes:
+            - /var/run/docker.sock:/var/run/docker.sock:ro
+            - /tmp:/tmp
+        depends_on:
+            - dagda-db
+
+    dagda-db:
+        image: meterian/cs-dagda-db:latest
+        networks:
+            - dagda-network
+        ports:
+            - "27017:27017"
+
 networks: 
     clair-network: 
+    dagda-network:

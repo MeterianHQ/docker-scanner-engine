@@ -628,7 +628,7 @@ startupServices() {
 
     printAndLog "Done."
     printAndLog "Updating the database..."
-    execAndLog dockerCompose pull clair-db #inline-scan TODO uncomment
+    execAndLog dockerCompose pull clair-db inline-scan dagda-db
     printAndLog "Done."
     execAndLog dockerCompose up -d
 
