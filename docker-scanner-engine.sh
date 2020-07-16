@@ -658,7 +658,7 @@ shutdownServices() {
     log "Services are up - proceeding with shutdown"
 
     printAndLog "~~~ Shutting down all services"
-    execAndLog dockerCompose down
+    execAndLog dockerCompose down --volumes
     printAndLog "Done."
 }
 
