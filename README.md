@@ -81,9 +81,6 @@ The final validation in the cloud, which is based on the Meterian curated NVD/MI
 Executing the script with no parameters prints a mini user manual with all supported commands as shown below
 
 ```bash
-        Usage: $0 <command> [<args>] [options...]
-
-        Commands:
         install           Installs the application required components
         scan              Scan a specific docker image,
                             e.g. $0 scan bash:latest [--min-security 90 --min-stability 80 --min-licensing 70] [--pull]
@@ -112,5 +109,5 @@ You can ensure that you can use Docker as non-root user by running this command:
     sudo setfacl --modify user:<user name or ID>:rw /var/run/docker.sock
 ```
 
-Please note that this is effective until the machine is restarted.
+Please note that this is effective until the machine is restarted: after a restart you will have to re-issue the command.
 
