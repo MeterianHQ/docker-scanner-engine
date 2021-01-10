@@ -5,7 +5,7 @@ set -u
 set -o pipefail
 
 PRG_NAME="Docker Scanner Engine"
-VERSION="0.9.5"
+VERSION="0.9.6"
 DC_PROJECT_NAME="dse" # Docker Compose Project Name
 if [[ -z "${METERIAN_ENV:-}" ]]; then
     export METERIAN_ENV="www"
@@ -16,10 +16,11 @@ DEV_MODE=${DSE_DEV_MODE:-}
 
 ISO_LOCAL_DATE_TIME="%Y-%m-%dT%H:%M:%S"
 ISO_LOCAL_DATE="%Y-%m-%d"
+FILE_FRIENDLY_LOCAL_DATE_TIME_FORMAT="%d-%m-%Y-%H-%M-%S"
 
 METERIAN_USER_DIR="${HOME}/.meterian/dse"
-DIAGNOSIS_FILE="${METERIAN_USER_DIR}/system.log"
-MAX_SYSLOG_FILE_SIZE=1000000
+SCANNER_ENGINE_LOG_FILE_PREFIX="scanner_engine_scan_"
+MAX_SYSLOG_FILE_SIZE="1MB"
 
 DOCKER_COMPOSE_YML_FILENAME="docker-compose.yml"
 DOCKER_COMPOSE_YML="${METERIAN_USER_DIR}/${DOCKER_COMPOSE_YML_FILENAME}"
@@ -58,6 +59,8 @@ _date() {
     format=${1:-$ISO_LOCAL_DATE_TIME}
     date +${format}
 }
+
+DIAGNOSIS_FILE="${METERIAN_USER_DIR}/${RANDOM}_system.log"
 
 log() {
     txt="${1:-}"
@@ -121,9 +124,10 @@ checkThatDockerAndDockerComposeAreInstalled() {
 }
 
 truncateSysLog() {
-    tail -c ${MAX_SYSLOG_FILE_SIZE} "${DIAGNOSIS_FILE}" > "${DIAGNOSIS_FILE}.tmp"
-    mv "${DIAGNOSIS_FILE}.tmp" ${DIAGNOSIS_FILE}
-    rm -f "${DIAGNOSIS_FILE}.tmp"
+    tempName="${RANDOM}_temp_syslog.tmp"
+    tail -c ${MAX_SYSLOG_FILE_SIZE} "${DIAGNOSIS_FILE}" > "${tempName}"
+    mv "${tempName}" ${DIAGNOSIS_FILE}
+    rm -f "${tempName}"
 }
 
 prepareDiagnosisFile() {
@@ -163,19 +167,27 @@ dockerCompose() {
     fi
 }
 
+scannerEngineLogFileName() {
+    echo "${METERIAN_USER_DIR}/${RANDOM}_${SCANNER_ENGINE_LOG_FILE_PREFIX}$(_date "${FILE_FRIENDLY_LOCAL_DATE_TIME_FORMAT}").log"
+}
+
 onExit() {
     # on exit routine
     log "onExit routine taking place..."
     log "Removing all remaining temporary files..."
     rm -f ${METERIAN_USER_DIR}/*.tmp
+
     # truncate system log file
     log "Truncating system log file..."
     truncateSysLog
 
+    # remove scan logs older than a week
+    find "${METERIAN_USER_DIR}" -maxdepth 1 -mtime +7 -type f -name "*.log" -delete
+
     # save service scanner engine logs
-    scanner_engine_log_file="${METERIAN_USER_DIR}/scanner_engine_$(_date "${ISO_LOCAL_DATE}").log"
+    scanner_engine_log_file="$(scannerEngineLogFileName)"
     log "Trying to save scanner-engine service logs to file: ${scanner_engine_log_file}"
-    run_cmd "dockerCompose logs -t -f scanner-engine" 1 >> "${scanner_engine_log_file}" || true
+    run_cmd "dockerCompose logs -t -f scanner-engine" 1 > "${scanner_engine_log_file}" || true
     if [[ -s ${scanner_engine_log_file} ]];then
         log "Successfully saved ${scanner_engine_log_file}"
     else
@@ -224,7 +236,7 @@ apiScan() {
 
 apiScanProgressMessage() {
     image=${1}
-    outputFile="${METERIAN_USER_DIR}/scan-status-msg.tmp"
+    outputFile="${METERIAN_USER_DIR}/${RANDOM}_scan-status-msg.tmp"
 
     rm --force "${outputFile}"
     log "Requesting scan progress message for ${image}..."
@@ -238,7 +250,7 @@ apiScanProgressMessage() {
 
 getScanStatus() {
     image=${1}
-    outputFile="${METERIAN_USER_DIR}/scan-status.tmp"
+    outputFile="${METERIAN_USER_DIR}/${RANDOM}_scan-status.tmp"
 
     rm --force "${outputFile}"
     log "Requesting scan status for ${image}..."
@@ -259,7 +271,7 @@ periodicScanStatusUpdate() {
     while [[ "${scanStatus}" != "success" && "${scanStatus}" != "failure" && "${scanStatus}" != "scan_failure" ]]; do
         currentMsg="$(apiScanProgressMessage "${image}")"
         if [[ "${previousMsg}" != "${currentMsg}" ]]; then
-            echo "${currentMsg}"
+            echo "$(_date) - ${currentMsg}"
             previousMsg="${currentMsg}"
         fi
         sleep ${interval}
@@ -345,13 +357,13 @@ retrieveMinScoresForRemoteAnalysis() {
         export MIN_SECURITY=${MIN_SECURITY}
         export MIN_STABILITY=${MIN_STABILITY}
         export MIN_LICENSING=${MIN_LICENSING}
-    else 
+    else
         log "No options passed for scan"
     fi
 }
 
 getAnalysisResultText() {
-    outputFile="${METERIAN_USER_DIR}/analysis-result.tmp"
+    outputFile="${METERIAN_USER_DIR}/${RANDOM}_analysis-result.tmp"
 
     rm --force "${outputFile}"
     log "Requesting analysis result text for ${image}..."
@@ -364,8 +376,8 @@ getAnalysisResultText() {
 }
 
 getAnalysisExitCode() {
-    outputFile="${METERIAN_USER_DIR}/analysis-exitcode-result.tmp"
-    
+    outputFile="${METERIAN_USER_DIR}/${RANDOM}_analysis-exitcode-result.tmp"
+
     rm --force "${outputFile}"
     log "Requesting analysis exitcode for ${image}..."
     curl -sS -o "${outputFile}" "http://localhost:8765/v1/docker/scans?name=${image}&what=exitcode&fmt=txt" 2>> ${DIAGNOSIS_FILE}
@@ -408,7 +420,7 @@ isImageAvailableLocally() {
     result=0
     if [[ -n "$(docker images "${1}" -q)" ]]; then
         result=0
-    else 
+    else
         result=1
     fi
 
@@ -466,6 +478,24 @@ checkImagePresenceAndPullIfRequested() {
     fi
 }
 
+wasScanCreated() {
+    img="${1}"
+    log "Checking if scan process for ${img} was created..."
+    outputFile="${METERIAN_USER_DIR}/${RANDOM}_status_code.tmp"
+    curl -sSI -o "${outputFile}" -X GET "http://localhost:8765/v1/docker/scans?name=${img}&what=status&fmt=txt"
+
+    result="$(head -n 1 "${outputFile}")"
+    rm -f "${outputFile}"
+    if [[ "${result}" =~ '404' ]]; then
+        log "Scan process for ${img} was not created"
+        echo "NO"
+    else
+        log "Scan process for ${img} was created"
+        echo "YES"
+    fi
+
+}
+
 imageScan() {
     log "Scanning image: \"${1}\"..."
     image=$1
@@ -480,19 +510,24 @@ imageScan() {
     dockerCompose up -d >> ${DIAGNOSIS_FILE} 2>&1
 
     checkImagePresenceAndPullIfRequested "${image}" "${2}"
-    
+
     apiScan ${image}
+    if [[ "$(wasScanCreated "${image}")" == "NO" ]]; then
+        printAndLog "Error: cannot scan ${image}, unsupported image."
+        exit -1
+    fi
     printAndLog "$(_date) - Scan for \"${image}\" has started"
     execAndLog periodicScanStatusUpdate "${image}" 2
     printAndLog "$(apiScanProgressMessage "${image}")"
     if [[ "$(getScanStatus "${image}")" != "success" ]]; then
         log "Scan was unsuccessful, exiting with code: 255"
+        echo "Unsuccessful scan!"
         exit -1
     fi
 
     log "Scan was successful"
     log "Printing remote analysis results..."
-    
+
     printAndLog
     printAndLog "$(getAnalysisResultText)"
     printAndLog
@@ -504,9 +539,9 @@ imageScan() {
 }
 
 getServicesCount() {
-    downloadComposeFilesIfMissing
+    downloadComposeFiles
     # gather full images names from docker compose files in a file
-    serviceImagesFile="${METERIAN_USER_DIR}/images.tmp"
+    serviceImagesFile="${METERIAN_USER_DIR}/${RANDOM}_image_names.tmp"
     grep -oP "image:\s+\K.*" ${DOCKER_COMPOSE_YML} | tr '"' " " >> ${serviceImagesFile}
     result=$(cat ${serviceImagesFile} | wc -l)
     rm --force ${serviceImagesFile}
@@ -628,7 +663,7 @@ startupServices() {
 
     printAndLog "Done."
     printAndLog "Updating the database..."
-    execAndLog dockerCompose pull clair-db inline-scan dagda-db
+    execAndLog dockerCompose pull clair-db dagda-db inline-scan
     printAndLog "Done."
     execAndLog dockerCompose up -d
 
@@ -658,7 +693,7 @@ shutdownServices() {
     log "Services are up - proceeding with shutdown"
 
     printAndLog "~~~ Shutting down all services"
-    execAndLog dockerCompose down --volumes
+    execAndLog dockerCompose down
     printAndLog "Done."
 }
 
@@ -685,22 +720,18 @@ $(docker images --format "table {{.Repository}}:{{.Tag}}\t{{.ID}}" | grep -P "(a
     log "All services are installed"
 }
 
-downloadComposeFilesIfMissing() {
-    if [[ ! -f "${DOCKER_COMPOSE_YML}" ]]; then
-        wget -O "${DOCKER_COMPOSE_YML}" -q https://raw.githubusercontent.com/MeterianHQ/docker-scanner-engine/master/${DOCKER_COMPOSE_YML_FILENAME}
-        log "Downloaded ${DOCKER_COMPOSE_YML_FILENAME}\nfolder content:\n$(ls -l ${DOCKER_COMPOSE_YML})\n" "-ne"
-    fi
+downloadComposeFiles() {
+    wget -O "${DOCKER_COMPOSE_YML}" -q https://raw.githubusercontent.com/MeterianHQ/docker-scanner-engine/master/${DOCKER_COMPOSE_YML_FILENAME}
+    log "Downloaded ${DOCKER_COMPOSE_YML_FILENAME}\nfolder content:\n$(ls -l ${DOCKER_COMPOSE_YML})\n" "-ne"
 
-    if [[ ! -f "${ANCHORE_YML}" ]]; then
-        wget -O "${ANCHORE_YML}" -q https://raw.githubusercontent.com/MeterianHQ/docker-scanner-engine/master/${ANCHORE_YML_FILENAME}
-        log "Downloaded ${ANCHORE_YML_FILENAME}\nfolder content:\n$(ls -l ${ANCHORE_YML})\n" "-ne"
-    fi
+    wget -O "${ANCHORE_YML}" -q https://raw.githubusercontent.com/MeterianHQ/docker-scanner-engine/master/${ANCHORE_YML_FILENAME}
+    log "Downloaded ${ANCHORE_YML_FILENAME}\nfolder content:\n$(ls -l ${ANCHORE_YML})\n" "-ne"
 }
 
 areAllServiceImagesInstalled() {
-    downloadComposeFilesIfMissing
+    downloadComposeFiles
     # gather full images names from docker compose files in a file
-    serviceImagesFile="${METERIAN_USER_DIR}/images.tmp"
+    serviceImagesFile="${METERIAN_USER_DIR}/${RANDOM}_images.tmp"
     grep -oP "image:\s+\K.*" ${DOCKER_COMPOSE_YML} | tr '"' " " >> ${serviceImagesFile} \
     && grep -oP "image:\s+\K.*" ${ANCHORE_YML} | tr '"' " " >> ${serviceImagesFile}
 
@@ -721,7 +752,7 @@ areAllServiceImagesInstalled() {
 
 install() {
     # Download docker-compose yml files if not present
-    downloadComposeFilesIfMissing
+    downloadComposeFiles
 
     if [[ "$(areAllServiceImagesInstalled)" == 1 ]]; then
         printAndLog "~~~ Installing "
@@ -747,20 +778,34 @@ restart() {
 
 updatePrgFilesAndDb() {
     printAndLog "Updating program files and database..."
-    downloadComposeFilesIfMissing
+    downloadComposeFiles
     execAndLog dockerCompose pull
     restart
 }
 
-zipLogs() {
+zipData() {
     # zipping logs to current folder
-    scanner_engine_log_file="${METERIAN_USER_DIR}/scanner_engine_$(_date "${ISO_LOCAL_DATE}").log"
     diagnosisDumpDir="${METERIAN_USER_DIR}/archives-dir"
     mkdir -p "${diagnosisDumpDir}"
-    rm -f ${diagnosisDumpDir}/*
+    rm -rf ${diagnosisDumpDir}/*
 
+    log "Moving log files to dump dir for imminent archiving..."
     cp ${DIAGNOSIS_FILE} "${diagnosisDumpDir}/"
-    cp ${scanner_engine_log_file} "${diagnosisDumpDir}/"
+    # copying all scan logs created within the span of a week
+    find "${METERIAN_USER_DIR}" -maxdepth 1 -mtime -7 -type f -name "${SCANNER_ENGINE_LOG_FILE_PREFIX}*" -exec cp '{}' "${diagnosisDumpDir}/" \;
+
+    if [[ -n "$(docker volume ls | grep -o "dse_scanners-volume" || true)" ]]; then
+        log "Docker volume exists, copying scanners scan data from it..."
+        docker container create --name temp -v dse_scanners-volume:/data meterian/cs-engine >> ${DIAGNOSIS_FILE} 2>&1
+        docker cp temp:/data/scanner-setups "${diagnosisDumpDir}/" >> ${DIAGNOSIS_FILE} 2>&1
+        docker rm -f temp >> ${DIAGNOSIS_FILE} 2>&1
+        log "Data successfully copied"
+
+        #remove executables
+        log "Removing executable from scan data before archiving..."
+        find "${diagnosisDumpDir}/scanner-setups/" -type f -perm /a+x -delete >> ${DIAGNOSIS_FILE} 2>&1
+        log "Done."
+    fi
 
     zipExitCode=1
     ( cd ${diagnosisDumpDir} ; zip -r "system-logs.zip" . * >> /dev/null 2>&1 ) || zipExitCode=${?}
@@ -803,8 +848,8 @@ diagnose() {
                 printAndLog "NO"
                 printAndLog "Try restarting $PRG_NAME:"
                 printAndLog "   $0 restart"
-                printAndLog "If this issue persists please reach out to Meterian support line"
-                zipLogs
+                printAndLog "If this issue persists please reach out to Meterian's support line"
+                zipData
             fi
 
         else
