@@ -52,3 +52,10 @@ Executing the script with no parameters prints a mini user manual with all suppo
         status            Check the application status
         help              Print usage manual
 ```
+
+## Linux users
+You can ensure that you can use Docker as non-root user by running this command:
+
+```bash
+    sudo setfacl --modify user:<user name or ID>:rw /var/run/docker.sock
+```
