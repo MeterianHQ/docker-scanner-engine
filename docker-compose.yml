@@ -24,7 +24,9 @@ services:
             - MIN_LICENSING=${MIN_LICENSING:-95}
         ports:
             - "8765:8765"
-        network_mode: "host"
+        networks:
+            - clair-network
+            - dagda-network
 
 # Clair specific configuration
     clair-db:
