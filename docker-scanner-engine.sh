@@ -5,7 +5,7 @@ set -u
 set -o pipefail
 
 PRG_NAME="Docker Scanner Engine"
-VERSION="0.9.7"
+VERSION="0.9.8"
 DC_PROJECT_NAME="dse" # Docker Compose Project Name
 if [[ -z "${METERIAN_ENV:-}" ]]; then
     export METERIAN_ENV="www"
@@ -509,7 +509,7 @@ imageScan() {
     log "Trying to retrieve min security, stability, and licensing scores parameters for scan remote analysis..."
     retrieveMinScoresForRemoteAnalysis ${2}
     log "Reloading services to update tied environment variables..."
-    dockerCompose up -d >> ${DIAGNOSIS_FILE} 2>&1
+    dockerCompose up --quiet-pull -d >> ${DIAGNOSIS_FILE} 2>&1
 
     checkImagePresenceAndPullIfRequested "${image}" "${2}"
 
@@ -658,16 +658,16 @@ startupServices() {
     printAndLog "~~~ Starting up all services"
     printAndLog "Updating services..."
     if [[ "${DEV_MODE}" != "on" ]]; then
-        execAndLog dockerCompose pull scanner-engine clair-scanner
+        execAndLog dockerCompose pull -q scanner-engine clair-scanner
     else
         execAndLog dockerCompose build scanner-engine clair-scanner
     fi
 
     printAndLog "Done."
     printAndLog "Updating the database..."
-    execAndLog dockerCompose pull clair-db dagda-db inline-scan
+    execAndLog dockerCompose pull -q clair-db dagda-db inline-scan
     printAndLog "Done."
-    execAndLog dockerCompose up -d
+    execAndLog dockerCompose up --quiet-pull -d
 
     sleep 10
 
@@ -760,7 +760,7 @@ install() {
         printAndLog "~~~ Installing "
         # Pull images for services defined in the docker-compose config files
         printAndLog "Installing services..."
-        execAndLog dockerCompose pull
+        execAndLog dockerCompose pull -q
         printAndLog "All service were successfully installed"
         printAndLog "The installation was successful."
     else
@@ -781,7 +781,8 @@ restart() {
 updatePrgFilesAndDb() {
     printAndLog "Updating program files and database..."
     downloadComposeFiles
-    execAndLog dockerCompose pull
+    execAndLog dockerCompose pull -q
+    printAndLog "Done."
     restart
 }
 
