@@ -5,7 +5,7 @@ set -u
 set -o pipefail
 
 PRG_NAME="Docker Scanner Engine"
-VERSION="0.9.6"
+VERSION="0.9.7"
 DC_PROJECT_NAME="dse" # Docker Compose Project Name
 if [[ -z "${METERIAN_ENV:-}" ]]; then
     export METERIAN_ENV="www"
@@ -26,6 +26,8 @@ DOCKER_COMPOSE_YML_FILENAME="docker-compose.yml"
 DOCKER_COMPOSE_YML="${METERIAN_USER_DIR}/${DOCKER_COMPOSE_YML_FILENAME}"
 ANCHORE_YML_FILENAME="anchore-engine-configuration.yml"
 ANCHORE_YML="${METERIAN_USER_DIR}/${ANCHORE_YML_FILENAME}"
+
+DSE_COMPOSEFILE_BRANCH="${DSE_COMPOSEFILE_BRANCH:-master}"
 
 ## function for running other functions with a timeout
 function run_cmd {
@@ -721,10 +723,10 @@ $(docker images --format "table {{.Repository}}:{{.Tag}}\t{{.ID}}" | grep -P "(a
 }
 
 downloadComposeFiles() {
-    wget -O "${DOCKER_COMPOSE_YML}" -q https://raw.githubusercontent.com/MeterianHQ/docker-scanner-engine/master/${DOCKER_COMPOSE_YML_FILENAME}
+    wget -O "${DOCKER_COMPOSE_YML}" -q https://raw.githubusercontent.com/MeterianHQ/docker-scanner-engine/${DSE_COMPOSEFILE_BRANCH}/${DOCKER_COMPOSE_YML_FILENAME}
     log "Downloaded ${DOCKER_COMPOSE_YML_FILENAME}\nfolder content:\n$(ls -l ${DOCKER_COMPOSE_YML})\n" "-ne"
 
-    wget -O "${ANCHORE_YML}" -q https://raw.githubusercontent.com/MeterianHQ/docker-scanner-engine/master/${ANCHORE_YML_FILENAME}
+    wget -O "${ANCHORE_YML}" -q https://raw.githubusercontent.com/MeterianHQ/docker-scanner-engine/${DSE_COMPOSEFILE_BRANCH}/${ANCHORE_YML_FILENAME}
     log "Downloaded ${ANCHORE_YML_FILENAME}\nfolder content:\n$(ls -l ${ANCHORE_YML})\n" "-ne"
 }
 

@@ -24,7 +24,9 @@ services:
             - MIN_LICENSING=${MIN_LICENSING:-95}
         ports:
             - "8765:8765"
-        network_mode: "host"
+        networks:
+            - dagda-network
+            - clair-network
 
 # Clair specific configuration
     clair-db:
@@ -34,6 +36,7 @@ services:
 
     clair-server:
         image: arminc/clair-local-scan:v2.0.6
+        restart: always
         links:
             - "clair-db:postgres"
         depends_on: 
