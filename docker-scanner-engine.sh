@@ -5,7 +5,7 @@ set -u
 set -o pipefail
 
 PRG_NAME="Docker Scanner Engine"
-VERSION="0.9.8"
+VERSION="0.9.9"
 DC_PROJECT_NAME="dse" # Docker Compose Project Name
 if [[ -z "${METERIAN_ENV:-}" ]]; then
     export METERIAN_ENV="www"
@@ -213,6 +213,7 @@ restart           Restart ${PRG_NAME}
 update            Update program files and databases
 diagnose          Diagnose the application
 status            Check the application status
+credits           Shows application credits
 help              Print usage manual
 
 HEREDOC
@@ -753,6 +754,7 @@ areAllServiceImagesInstalled() {
 }
 
 install() {
+    credits
     # Download docker-compose yml files if not present
     downloadComposeFiles
 
@@ -887,9 +889,16 @@ status() {
     fi
 }
 
-# echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
-# echo "  ${PRG_NAME} v${VERSION}  "
-# echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-"
+credits() {
+    echo "Meterian Docker Scanner Engine v$VERSION"
+    echo "© 2017-2021 Meterian Ltd - All rights reserved"
+    echo
+    echo "Also powered by:"
+    echo "Anchore Inline Scan v0.7.1, Apache License 2.0"
+    echo "Clair Scanner v2.0.6, Apache License 2.0"
+    echo "Dagda v0.8.0, Apache License 2.0"
+    echo
+}
 
 if [[ $# -eq 0 ]]; then
     showUsageText
@@ -907,5 +916,6 @@ while [[ "$#" -gt 0 ]]; do case $1 in
   update)           updatePrgFilesAndDb; exit 0 ;;
   diagnose)         diagnose; exit 0 ;;
   status)           status; exit 0;;
+  credits)          credits; exit 0;;
   *) echo "Unknown command: $1"; exit -1 ;;
 esac; shift; done

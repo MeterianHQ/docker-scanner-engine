@@ -91,6 +91,7 @@ Executing the script with no parameters prints a mini user manual with all suppo
         diagnose          Diagnose the application
         status            Check the application status
         version           Shows the current application version
+        credits           Shows application credits
         help              Print usage manual
 ```
 ### Opensource scanners used:
