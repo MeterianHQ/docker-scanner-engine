@@ -542,9 +542,7 @@ imageScan() {
 }
 
 getServicesCount() {
-    if [[ ! -f ${DOCKER_COMPOSE_YML} && ! -f ${ANCHORE_YML} ]];then
-        downloadComposeFiles
-    fi
+    downloadComposeFiles
     # gather full images names from docker compose files in a file
     serviceImagesFile="${METERIAN_USER_DIR}/${RANDOM}_image_names.tmp"
     grep -oP "image:\s+\K.*" ${DOCKER_COMPOSE_YML} | tr '"' " " >> ${serviceImagesFile}
@@ -726,17 +724,15 @@ $(docker images --format "table {{.Repository}}:{{.Tag}}\t{{.ID}}" | grep -P "(a
 }
 
 downloadComposeFiles() {
-    wget -O "${DOCKER_COMPOSE_YML}" -q https://raw.githubusercontent.com/MeterianHQ/docker-scanner-engine/${DSE_COMPOSEFILE_BRANCH}/${DOCKER_COMPOSE_YML_FILENAME}
+    wget -N -O "${DOCKER_COMPOSE_YML}" -q https://raw.githubusercontent.com/MeterianHQ/docker-scanner-engine/${DSE_COMPOSEFILE_BRANCH}/${DOCKER_COMPOSE_YML_FILENAME}
     log "Downloaded ${DOCKER_COMPOSE_YML_FILENAME}\nfolder content:\n$(ls -l ${DOCKER_COMPOSE_YML})\n" "-ne"
 
-    wget -O "${ANCHORE_YML}" -q https://raw.githubusercontent.com/MeterianHQ/docker-scanner-engine/${DSE_COMPOSEFILE_BRANCH}/${ANCHORE_YML_FILENAME}
+    wget -N -O "${ANCHORE_YML}" -q https://raw.githubusercontent.com/MeterianHQ/docker-scanner-engine/${DSE_COMPOSEFILE_BRANCH}/${ANCHORE_YML_FILENAME}
     log "Downloaded ${ANCHORE_YML_FILENAME}\nfolder content:\n$(ls -l ${ANCHORE_YML})\n" "-ne"
 }
 
 areAllServiceImagesInstalled() {
-    if [[ ! -f ${DOCKER_COMPOSE_YML} && ! -f ${ANCHORE_YML} ]];then
-        downloadComposeFiles
-    fi
+    downloadComposeFiles
     # gather full images names from docker compose files in a file
     serviceImagesFile="${METERIAN_USER_DIR}/${RANDOM}_images.tmp"
     grep -oP "image:\s+\K.*" ${DOCKER_COMPOSE_YML} | tr '"' " " >> ${serviceImagesFile} \

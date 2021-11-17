@@ -22,6 +22,7 @@ services:
             - MIN_SECURITY=${MIN_SECURITY:-90}
             - MIN_STABILITY=${MIN_STABILITY:-80}
             - MIN_LICENSING=${MIN_LICENSING:-95}
+            - DSE_SCAN_TIMEOUT_MINUTES=${DSE_SCAN_TIMEOUT_MINUTES:-}
         ports:
             - "8765:8765"
         networks:

@@ -67,6 +67,11 @@ The full JSON scan result is returned, including the link to the web report on M
 
 Please note that while you can execute the API call from anywhere in your network (assuming traffic is allowed, of course) the image will be pulled from the server, so from the machine where the script was initially installed.
 
+### Overriding scan time limit
+The default time limit for a single image scan is 10 minutes, to override this simply set the environment variable `DSE_SCAN_TIMEOUT_MINUTES` with the new desired time limit.
+
+    $ export DSE_SCAN_TIMEOUT_MINUTES=20
+
 ### Design
 The scanner is design to run on your premises, where it can actually access images locally. It is a meta-scanner that integrates:
 - three open source scanners 
