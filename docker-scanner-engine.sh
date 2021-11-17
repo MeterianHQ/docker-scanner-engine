@@ -5,7 +5,7 @@ set -u
 set -o pipefail
 
 PRG_NAME="Docker Scanner Engine"
-VERSION="0.9.9"
+VERSION="0.9.10"
 DC_PROJECT_NAME="dse" # Docker Compose Project Name
 if [[ -z "${METERIAN_ENV:-}" ]]; then
     export METERIAN_ENV="www"
@@ -542,7 +542,9 @@ imageScan() {
 }
 
 getServicesCount() {
-    downloadComposeFiles
+    if [[ ! -f ${DOCKER_COMPOSE_YML} && ! -f ${ANCHORE_YML} ]];then
+        downloadComposeFiles
+    fi
     # gather full images names from docker compose files in a file
     serviceImagesFile="${METERIAN_USER_DIR}/${RANDOM}_image_names.tmp"
     grep -oP "image:\s+\K.*" ${DOCKER_COMPOSE_YML} | tr '"' " " >> ${serviceImagesFile}
@@ -732,7 +734,9 @@ downloadComposeFiles() {
 }
 
 areAllServiceImagesInstalled() {
-    downloadComposeFiles
+    if [[ ! -f ${DOCKER_COMPOSE_YML} && ! -f ${ANCHORE_YML} ]];then
+        downloadComposeFiles
+    fi
     # gather full images names from docker compose files in a file
     serviceImagesFile="${METERIAN_USER_DIR}/${RANDOM}_images.tmp"
     grep -oP "image:\s+\K.*" ${DOCKER_COMPOSE_YML} | tr '"' " " >> ${serviceImagesFile} \

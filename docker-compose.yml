@@ -55,7 +55,7 @@ services:
 
 # Dagda specific configuration
     dagda-server:
-        image: 3grander/dagda:0.8.0
+        image: meterian/dagda:0.8.1
         networks:
             - dagda-network
         entrypoint: python dagda.py start -s 0.0.0.0 -p 5000 -m dagda-db -mp 27017
