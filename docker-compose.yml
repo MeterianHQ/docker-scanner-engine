@@ -22,6 +22,7 @@ services:
             - MIN_SECURITY=${MIN_SECURITY:-90}
             - MIN_STABILITY=${MIN_STABILITY:-80}
             - MIN_LICENSING=${MIN_LICENSING:-95}
+            - DSE_SCAN_TIMEOUT_MINUTES=${DSE_SCAN_TIMEOUT_MINUTES:-}
         ports:
             - "8765:8765"
         networks:
@@ -55,7 +56,7 @@ services:
 
 # Dagda specific configuration
     dagda-server:
-        image: 3grander/dagda:0.8.0
+        image: meterian/dagda:0.8.1
         networks:
             - dagda-network
         entrypoint: python dagda.py start -s 0.0.0.0 -p 5000 -m dagda-db -mp 27017
