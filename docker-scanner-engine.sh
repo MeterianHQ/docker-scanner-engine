@@ -781,6 +781,8 @@ install() {
         done < "${serviceImagesFile}"
         rm --force ${serviceImagesFile}
 
+        execAndLog dockerCompose pull -q
+
         printAndLog "All service were successfully installed"
         printAndLog "The installation was successful."
     else
