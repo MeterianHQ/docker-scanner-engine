@@ -5,7 +5,7 @@ set -u
 set -o pipefail
 
 PRG_NAME="Docker Scanner Engine"
-VERSION="0.9.10"
+VERSION="0.9.11"
 DC_PROJECT_NAME="dse" # Docker Compose Project Name
 if [[ -z "${METERIAN_ENV:-}" ]]; then
     export METERIAN_ENV="www"
@@ -150,6 +150,17 @@ prepareDiagnosisFile() {
     echo -ne "\n----\n\n" >> "${DIAGNOSIS_FILE}"
 }
 prepareDiagnosisFile
+
+downloadComposeFiles() {
+    zflag="$(test -f ${DOCKER_COMPOSE_YML} && echo "-z '${DOCKER_COMPOSE_YML}'" || echo "")"
+    curl -sS -o "${DOCKER_COMPOSE_YML}" $zflag https://raw.githubusercontent.com/MeterianHQ/docker-scanner-engine/${DSE_COMPOSEFILE_BRANCH}/${DOCKER_COMPOSE_YML_FILENAME}
+    log "Downloaded ${DOCKER_COMPOSE_YML_FILENAME}\nfolder content:\n$(ls -l ${DOCKER_COMPOSE_YML})\n" "-ne"
+
+    zflag="$(test -f ${ANCHORE_YML} && echo "-z '${ANCHORE_YML}'" || echo "")"
+    curl -sS -o "${ANCHORE_YML}" $zflag https://raw.githubusercontent.com/MeterianHQ/docker-scanner-engine/${DSE_COMPOSEFILE_BRANCH}/${ANCHORE_YML_FILENAME}
+    log "Downloaded ${ANCHORE_YML_FILENAME}\nfolder content:\n$(ls -l ${ANCHORE_YML})\n" "-ne"
+}
+downloadComposeFiles
 
 dockerCompose() {
     log "Running docker compose command"
@@ -723,14 +734,6 @@ $(docker images --format "table {{.Repository}}:{{.Tag}}\t{{.ID}}" | grep -P "(a
     log "All services are installed"
 }
 
-downloadComposeFiles() {
-    wget -N -O "${DOCKER_COMPOSE_YML}" -q https://raw.githubusercontent.com/MeterianHQ/docker-scanner-engine/${DSE_COMPOSEFILE_BRANCH}/${DOCKER_COMPOSE_YML_FILENAME}
-    log "Downloaded ${DOCKER_COMPOSE_YML_FILENAME}\nfolder content:\n$(ls -l ${DOCKER_COMPOSE_YML})\n" "-ne"
-
-    wget -N -O "${ANCHORE_YML}" -q https://raw.githubusercontent.com/MeterianHQ/docker-scanner-engine/${DSE_COMPOSEFILE_BRANCH}/${ANCHORE_YML_FILENAME}
-    log "Downloaded ${ANCHORE_YML_FILENAME}\nfolder content:\n$(ls -l ${ANCHORE_YML})\n" "-ne"
-}
-
 areAllServiceImagesInstalled() {
     downloadComposeFiles
     # gather full images names from docker compose files in a file
@@ -762,7 +765,24 @@ install() {
         printAndLog "~~~ Installing "
         # Pull images for services defined in the docker-compose config files
         printAndLog "Installing services..."
+
+        # Install services sequentially
+        serviceImagesFile="${METERIAN_USER_DIR}/${RANDOM}_images.tmp"
+        grep -oP "image:\s+\K.*" ${DOCKER_COMPOSE_YML} | tr '"' " " >> ${serviceImagesFile} \
+        && grep -oP "image:\s+\K.*" ${ANCHORE_YML} | tr '"' " " >> ${serviceImagesFile}
+        while read -r image
+        do
+            imageId=$(docker images --format {{.ID}} ${image})
+            if [[ -z "${imageId}" ]]; then
+                echo "Installing $image..."
+                execAndLog docker pull -q $image
+                echo "Done."
+            fi
+        done < "${serviceImagesFile}"
+        rm --force ${serviceImagesFile}
+
         execAndLog dockerCompose pull -q
+
         printAndLog "All service were successfully installed"
         printAndLog "The installation was successful."
     else
