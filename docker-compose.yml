@@ -6,7 +6,7 @@ volumes:
 
 services: 
     scanner-engine:
-        image: meterian/cs-engine:latest
+        image: meterian/cs-engine-canary:latest
         depends_on: 
             - clair-scanner
             - dagda-server
@@ -46,7 +46,7 @@ services:
             - clair-network
 
     clair-scanner: 
-        image: meterian/cs-clair:latest
+        image: meterian/cs-clair-canary:latest
         volumes:
             - /var/run/docker.sock:/var/run/docker.sock
             - scanners-volume:/workspace
