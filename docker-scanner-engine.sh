@@ -5,7 +5,7 @@ set -u
 set -o pipefail
 
 PRG_NAME="Docker Scanner Engine"
-VERSION="0.9.11"
+VERSION="0.9.12"
 DC_PROJECT_NAME="dse" # Docker Compose Project Name
 if [[ -z "${METERIAN_ENV:-}" ]]; then
     export METERIAN_ENV="www"
@@ -628,7 +628,7 @@ authenticate() {
             exit -1
         fi
 
-        statusCode=$(echo ${response} | head -n 1)
+        statusCode=$(echo "${response}" | head -n 1)
         reg='200'
         if [[ "${statusCode}" =~ $reg ]]; then
             echo "Successfully authenticated!"
