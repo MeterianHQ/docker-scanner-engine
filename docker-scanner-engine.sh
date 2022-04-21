@@ -612,7 +612,12 @@ authenticate() {
     if [[ -n "${METERIAN_API_TOKEN}" ]]; then
         echo "~~~ Authentication in progress"
 
-        domainUrl="${METERIAN_ENV}.meterian.com"
+        proto="https"
+        if [[ ${METERIAN_ENV} == "local" ]]; then
+            proto="http"
+        fi
+
+        domainUrl="${proto}://${METERIAN_ENV}.meterian.com"
         if [[ "$(checkDomainIsReachable ${domainUrl})" != "0" ]]; then
             echo "Authentication failed"
             echo "The domain \"$domainUrl\" is unreachable"
