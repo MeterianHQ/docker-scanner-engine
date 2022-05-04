@@ -4,7 +4,7 @@ Expose a set of server-side APIs that you can employ to perform analyses on give
 
 ## Prerequisites
 - [Docker](https://docs.docker.com/install/linux/docker-ce/ubuntu/#install-using-the-convenience-script) (v1.12.0+)
-- [Docker Compose](https://docs.docker.com/compose/install/#install-compose-on-linux-systems) (v1.9.0+)
+- [Docker Compose](https://docs.docker.com/compose/install/#install-compose-on-linux-systems) (v1.28.0+)
 - [curl](https://curl.se/) command line tool, required by the script and usually available out-of-the box in modern operating systems
 
 ## How to use
