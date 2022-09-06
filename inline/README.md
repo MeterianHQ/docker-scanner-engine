@@ -18,7 +18,7 @@ The Docker scanner container is specifically packaged to include all the requisi
 
 You can perform a scan by simply specifying the target image to the `docker-scan.sh` script
 
-    $ ./docker-scanner.sh <image:tag>
+    $ ./docker-scan.sh <image:tag>
 
 Note that to perform a scan a valid Meterian API token must be set as environment variable on your system. To gain a token, create one from your account at https://meterian.com/account/#tokens
 
