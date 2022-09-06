@@ -3,9 +3,9 @@
 Meterian offers a set of scanners and solutions to perform a security, stability and licensing assessment of a given Docker image. Refer to the following available options for what suits you best:
 
 - **[server](server/README.md)**: runs as an application server, including multiple OSS engines, exposes APIs supporting concurrent executions but still has the convenience of a CLI script; it requires docker and docker-compose
-- **[inline](inline/README.md)**: a docker image that can be easily embedded in your CI/CD pipeline, with simple companion script to excute the analysis; it requires only docker.
+- **[inline](inline/README.md)**: a docker image that can be easily embedded in your CI/CD pipeline, with simple companion script to execute the analysis; it requires only docker.
 
-If you are using the scanner occasionally or in a specific CI/CD integration/pipelin. the **inline** version is certainly more suitable. If however you plan an extensive use on premises of the scanner the **server** version is preferable. See the details in the corresponding pages.
+If you are using the scanner occasionally or in a specific CI/CD integration/pipeline. the **inline** version is certainly more suitable. If however you plan an extensive use on premises of the scanner the **server** version is preferable. See the details in the corresponding pages.
 <br/><br/>
 
 
