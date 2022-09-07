@@ -33,9 +33,9 @@ Operational overrides are available through the environment variables
 | Name | Description |
 |------|-------------|
 | `DSE_SCAN_TIMEOUT_MINUTES` | Set this variable to override the time limit for single image scans. The default time limit is 10 minutes |
-| `METERIAN_ENV` | For on-premises instances of Meterian set this variable to target the subdomain of the site where your instance runs |
-| `METERIAN_PROTO` | For on-premises instances of Meterian set this variable to target the HTTP protocol of the site where your instance runs |
-| `METERIAN_DOMAIN` | For on-premises instances of Meterian set this variable to target the domain of the site where your instance runs |
+| `METERIAN_ENV` | For on-premises instances of Meterian set this variable to target the right subdomain of the site where your instance runs |
+| `METERIAN_PROTO` | For on-premises instances of Meterian set this variable to target the right HTTP protocol of the site where your instance runs |
+| `METERIAN_DOMAIN` | For on-premises instances of Meterian set this variable to target the right domain of the site where your instance runs |
 
 ### Opensource scanners used:
 
