@@ -26,7 +26,7 @@ fi
 docker run --rm -it -v /tmp:/tmp \
     -v /var/run/docker.sock:/var/run/docker.sock \
     -v $DSE_DOCKER_BIN:$DSE_DOCKER_BIN \
-    -v $(pwd):/reports \
+    -v $(pwd):/workspace \
     -e METERIAN_API_TOKEN=$METERIAN_API_TOKEN \
     -e METERIAN_ENV=${METERIAN_ENV:-} \
     -e METERIAN_DOMAIN=${METERIAN_DOMAIN:-} \
