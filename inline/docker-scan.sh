@@ -26,9 +26,12 @@ fi
 docker run --rm -it -v /tmp:/tmp \
     -v /var/run/docker.sock:/var/run/docker.sock \
     -v $DSE_DOCKER_BIN:$DSE_DOCKER_BIN \
+    -v $(pwd):/reports \
     -e METERIAN_API_TOKEN=$METERIAN_API_TOKEN \
     -e METERIAN_ENV=${METERIAN_ENV:-} \
     -e METERIAN_DOMAIN=${METERIAN_DOMAIN:-} \
     -e METERIAN_PROTO=${METERIAN_PROTO:-} \
     -e DSE_SCAN_TIMEOUT_MINUTES=$DSE_SCAN_TIMEOUT_MINUTES \
+    -e HOST_UID=$(id -u) \
+    -e HOST_GID=$(id -g) \
     $IMAGE_NAME $*
