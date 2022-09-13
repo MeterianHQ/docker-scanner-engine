@@ -16,11 +16,11 @@ exportDockerBin() {
 }
 exportDockerBin
 
-IMAGE_NAME="meterian/cs-engine:inline"
+IMAGE_NAME="meterian/cs-engine:latest"
 if [[ "$*" =~ "--canary" ]];
 then
     CLIENT_CANARY_FLAG=on
-    IMAGE_NAME="meterian/cs-engine-canary:inline"
+    IMAGE_NAME="meterian/cs-engine-canary:latest"
 fi
 
 docker run --rm -it -v /tmp:/tmp \
