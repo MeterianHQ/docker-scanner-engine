@@ -34,4 +34,5 @@ docker run --rm -v /tmp:/tmp \
     -e DSE_SCAN_TIMEOUT_MINUTES=$DSE_SCAN_TIMEOUT_MINUTES \
     -e HOST_UID=$(id -u) \
     -e HOST_GID=$(id -g) \
+    -e http_proxy="${http_proxy}" \
     $IMAGE_NAME $*
