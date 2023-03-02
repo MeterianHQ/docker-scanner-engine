@@ -102,3 +102,4 @@ Log out and log back in so that your group membership is re-evaluated. **This se
 This product uses these opensource scanners:
 - [Trivy](https://github.com/aquasecurity/trivy)
 - [Grype](https://github.com/anchore/grype)
+- [Syft](https://github.com/anchore/syft)
