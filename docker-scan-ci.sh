@@ -35,4 +35,5 @@ docker run --rm -v /tmp:/tmp \
     -e HOST_UID=$(id -u) \
     -e HOST_GID=$(id -g) \
     -e http_proxy="${http_proxy}" \
+   -e https_proxy="${https_proxy}" \
     $IMAGE_NAME $*
