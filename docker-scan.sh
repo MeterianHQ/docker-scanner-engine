@@ -5,17 +5,6 @@ set -o pipefail
 
 METERIAN_API_TOKEN=${METERIAN_API_TOKEN:?'Required METERIAN_API_TOKEN environment variable is unset.'}
 
-exportDockerBin() {
-    dockerBin="$(which docker)"
-    reg='snap'
-    if [[ "${dockerBin}" =~ $reg ]]; then
-        export DSE_DOCKER_BIN="/snap/docker/current/bin/docker"
-    else
-        export DSE_DOCKER_BIN="${dockerBin}"
-    fi
-}
-exportDockerBin
-
 IMAGE_NAME="meterian/cs-engine:latest"
 if [[ "$*" =~ "--canary" ]];
 then
@@ -25,7 +14,6 @@ fi
 
 docker run --rm -it -v /tmp:/tmp \
     -v /var/run/docker.sock:/var/run/docker.sock \
-    -v $DSE_DOCKER_BIN:$DSE_DOCKER_BIN \
     -v $(pwd):/workspace \
     -e METERIAN_API_TOKEN=$METERIAN_API_TOKEN \
     -e METERIAN_ENV=${METERIAN_ENV:-} \
